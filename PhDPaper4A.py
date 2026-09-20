@@ -39,7 +39,12 @@ is "supported under replication, not generalised"):
   H4 pos    Firth binomial regression of p_i on gated distance, log(1+redundancy)
             and their interaction: distance < 0, redundancy > 0, interaction > 0,
             fitted separately on each evaluation sample.
-  H5 shape  matched-count blocks: chain below star and mesh by >= 0.05.
+  H5 shape  (a) matched-count blocks (same 59 connections rearranged): chain
+            below star by >= 0.05 and below mesh (CI > 0); (b) representative
+            blocks (same nodes, gate and external entry points; each shape at
+            its natural connectivity): chain below star by >= 0.05 and below
+            mesh at mean degree 6 and 12 (CI > 0). The entry-share curve of Y
+            per shape is an exploratory output.
   H6 gate   gated model beats the eligible-subgraph ungated model by >= 0.02
             concordance, paired CI lower bound > 0, fitted on development only;
             the whole-graph ungated rival is reported as secondary.
@@ -101,6 +106,10 @@ DESIGN = dict(
     runs_per_arch=1000, pilot_runs_per_arch=100,
     arch_per_cell=10, pilot_arch_per_cell=10,         # the pilot uses the full design at fewer runs
     matched_blocks=20, pilot_matched_blocks=20,
+    rep_blocks=10, pilot_rep_blocks=10,                # representative-shape blocks per (f, entry share)
+    entry_shares=[0.01, 0.05, 0.10, 0.15, 0.20],       # external entry points as a share of estate nodes
+    mesh_degrees=[6, 12],                              # representative mesh mean degrees
+    h3_family_cells=10,                                # 2 chain forms x 5 f: band level 1 - 0.05/10 per cell
     mixed_per_sample=400, pilot_mixed_per_sample=400,
     n_boot=2000, pilot_n_boot=200, boot_seed=20260920, model_seed=20260920,
     f_levels=[0.2, 0.4, 0.6, 0.8, 1.0],
@@ -113,7 +122,7 @@ DESIGN = dict(
     h5_min_delta=0.05, h6_min_delta_c=0.02, alpha=0.05,
     docker_per_shape=3, docker_n=30, docker_f=0.6, docker_seeds=20,
     redundancy_cap=5,
-    h4_ridge_grid=[0.0, 0.01, 0.1, 1.0, 10.0], h4_cv_folds=5,
+    h4_ridge_grid=[0.0, 0.01, 0.1, 1.0, 10.0, 30.0, 100.0, 300.0, 1000.0], h4_cv_folds=5,
 )
 
 # Mixed-architecture factors (Section 6.2): name -> (low, high, kind)
@@ -840,6 +849,51 @@ def build_canonical(task: dict):
     return spec, meta, arch_meta
 
 
+# ---- representative-shape blocks (Section 6.1, H5b) --------------------------------------
+
+def build_representative(task: dict):
+    """Same nodes, A holders, impacts, gate draws and external entry points in every architecture
+    of a block; the shape sets the internal connectivity. Native Interface marks exactly the
+    entry points, and the source connects to exactly those."""
+    c, sp, RC, Cond = _core(), _core().sp, _core().RC, _core().Cond
+    rng = np.random.default_rng(task["seed"])                       # block-level draws
+    N, f, shape = task["N"], task["f"], task["shape"]
+    ids = [f"n{k}" for k in range(N)]
+    imp = _impacts(rng, N)
+    A = _exact_subset(rng, N, f, [])
+    n_entry = max(1, int(round(task["entry_share"] * N)))
+    entry = sorted(int(x) for x in rng.choice(N, n_entry, replace=False))
+    non_entry = [k for k in range(N) if k not in entry]
+    hub = int(rng.choice(non_entry)) if non_entry else 0
+    I = np.zeros(N, dtype=bool); I[entry] = True
+    X = np.ones(N, dtype=bool)
+    srng = np.random.default_rng(task["seed"] * 7919 + {"rep_mesh6": 1, "rep_mesh12": 2, "rep_star": 3, "rep_chain": 4}[shape])
+    rels, meta = [], {}
+    for k in entry:
+        rels.append(_rel(c, "src0", ids[k], Cond.INTERFACE, RC.CONNECTION))
+        meta[ids[k]] = "entry"
+    if shape.startswith("rep_mesh"):
+        degree = int(shape[len("rep_mesh"):])
+        p = min(1.0, degree / (N - 1))
+        iu, ju = np.triu_indices(N, 1)
+        keep = srng.random(len(iu)) < p
+        for i, j in zip(iu[keep].tolist(), ju[keep].tolist()):
+            rels.append(_rel(c, ids[i], ids[j], Cond.INTERFACE, RC.CONNECTION))
+    elif shape == "rep_star":
+        for j in range(N):
+            if j != hub:
+                rels.append(_rel(c, ids[hub], ids[j], Cond.INTERFACE, RC.CONNECTION))
+        meta[ids[hub]] = "hub"
+    else:
+        order = srng.permutation(N)
+        for a_, b_ in zip(order[:-1], order[1:]):
+            rels.append(_rel(c, ids[int(a_)], ids[int(b_)], Cond.INTERFACE, RC.CONNECTION))
+    nodes = [_node(sp, ids[k], "estate", I[k], X[k], A[k], imp[k]) for k in range(N)] + [_source(sp)]
+    spec = make_spec(task["arch_id"], nodes, rels, task["seed"])
+    return spec, meta, dict(f_target=f, d=0.0, n=n_entry, variant=shape, sources="src0", source_types="canonical",
+                            N_target=N, n_A_assigned=int(A.sum()), entry_share=task["entry_share"])
+
+
 # ---- mixed architectures (Section 6.2) -------------------------------------
 
 def draw_factors(n: int, ranges: dict, seed: int) -> List[dict]:
@@ -1326,6 +1380,8 @@ def run_architecture(task: dict):
     c = _core()
     if task["family"] == "mixed":
         spec, meta, ameta = build_mixed(task)
+    elif task["family"] == "representative":
+        spec, meta, ameta = build_representative(task)
     else:
         spec, meta, ameta = build_canonical(task)
     sources = ameta["sources"].split(";")
@@ -1345,7 +1401,7 @@ def run_architecture(task: dict):
                 raise ICFailure(f"IC6 failed: gated redundancy above ungated at {nid} in {task['arch_id']}")
             if r["gated_distance"] >= 0 and r["redundancy"] < 1:
                 raise ICFailure(f"IC6 failed: reachable node with redundancy 0 at {nid} in {task['arch_id']}")
-    if task["family"] == "canonical" and ameta.get("n_A_assigned", -1) != int(round(task["f"] * task["N"])):
+    if task["family"] in ("canonical", "representative") and ameta.get("n_A_assigned", -1) != int(round(task["f"] * task["N"])):
         raise ICFailure(f"IC4 failed: A count {ameta.get('n_A_assigned')} for f {task['f']}, N {task['N']} in {task['arch_id']}")
     n_runs = task["n_runs"] * len(sources)          # Section 8: the configured runs for each source
     per_src = [task["n_runs"]] * len(sources)
@@ -1463,6 +1519,22 @@ def matched_tasks(sample: str, seed: int, N: int, blocks: int, n_runs: int) -> L
     return T
 
 
+def representative_tasks(sample: str, seed: int, N: int, blocks: int, n_runs: int) -> List[dict]:
+    T = []
+    for f in DESIGN["f_levels"]:
+        for e in DESIGN["entry_shares"]:
+            for b in range(blocks):
+                h = hashlib.sha256(f"{seed}|representative|{f}|{e}|{b}".encode()).digest()
+                aseed = int.from_bytes(h[:4], "little") % (2 ** 31 - 1) + 1
+                block = f"{sample}_{seed}_rep_f{f}_e{e}_{b:03d}"
+                shapes = [f"rep_mesh{d}" for d in DESIGN["mesh_degrees"]] + ["rep_star", "rep_chain"]
+                for shape in shapes:
+                    T.append(dict(arch_id=f"{block}_{shape[4:]}", family="representative", shape=shape,
+                                  cell=f"f{f}_e{e}", seed=aseed, N=N, n_runs=n_runs, f=f, entry_share=e,
+                                  meta=dict(sample=sample, sample_seed=seed, block=block, is_primary=True)))
+    return T
+
+
 def mixed_tasks(sample: str, seed: int, ranges: dict, n: int, n_runs: int) -> List[dict]:
     T = []
     for k, f in enumerate(draw_factors(n, ranges, seed * 100 + 7)):
@@ -1486,12 +1558,13 @@ def all_tasks(design: dict, pilot: bool) -> List[dict]:
     for sample, seed, ranges, N in plan:
         T += canonical_tasks(sample, seed, N, per_cell, n_runs)
         T += matched_tasks(sample, seed, N, blocks, n_runs)
+        T += representative_tasks(sample, seed, N, design["pilot_rep_blocks"] if pilot else design["rep_blocks"], n_runs)
         T += mixed_tasks(sample, seed, ranges, n_mixed, n_runs)
     return T
 
 
 ARCH_COLUMNS = (["arch_id", "sample", "sample_seed", "block", "is_primary", "family", "shape", "cell", "seed", "N",
-                 "f_target", "d", "n", "variant", "sources", "source_types", "N_target", "n_A_assigned"]
+                 "f_target", "d", "n", "variant", "sources", "source_types", "N_target", "n_A_assigned", "entry_share"]
                 + [f"f_{k}" for k in FACTORS_DEV] + ["n_estate", "n_external", "n_relations"] + ARCH_MEASURES)
 
 
@@ -1736,12 +1809,50 @@ def predict_node_model(m: dict, df: pd.DataFrame) -> np.ndarray:
 
 
 def concordance(s: np.ndarray, y: np.ndarray) -> float:
+    """Share of pairs with different y whose score order matches the y order, score ties one half.
+    Exact, O(n log n): sweep in increasing y with a Fenwick tree over compressed score ranks, so it
+    is safe on hundreds of thousands of rows (the pilot broad screen)."""
     s, y = np.asarray(s, float), np.asarray(y, float)
-    sy = np.sign(y[:, None] - y[None, :])
-    denom = np.abs(sy).sum()
-    if denom == 0:
+    ok = np.isfinite(s) & np.isfinite(y)
+    s, y = s[ok], y[ok]
+    n = len(y)
+    if n < 2:
         return float("nan")
-    return float(0.5 + 0.5 * (np.sign(s[:, None] - s[None, :]) * sy).sum() / denom)
+    ranks = np.unique(s, return_inverse=True)[1] + 1          # 1-based compressed score ranks
+    m = int(ranks.max())
+    order = np.argsort(y, kind="mergesort")
+    tree = np.zeros(m + 1, dtype=np.int64)
+    def add(i):
+        while i <= m:
+            tree[i] += 1
+            i += i & -i
+    def prefix(i):
+        t = 0
+        while i > 0:
+            t += tree[i]
+            i -= i & -i
+        return t
+    conc = tied = total = 0.0
+    seen = 0
+    i = 0
+    while i < n:
+        j = i
+        while j < n and y[order[j]] == y[order[i]]:
+            j += 1
+        grp = ranks[order[i:j]]
+        for r in grp:                     # pairs with earlier (lower-y) rows only
+            below = prefix(r - 1)
+            same = prefix(r) - below
+            conc += below
+            tied += same
+        total += seen * (j - i)
+        for r in grp:
+            add(r)
+        seen += j - i
+        i = j
+    if total == 0:
+        return float("nan")
+    return float((conc + 0.5 * tied) / total)
 
 
 def within_arch_concordance(df: pd.DataFrame, score: np.ndarray) -> pd.Series:
@@ -1918,8 +2029,9 @@ def _h3_cell(args):
         sim = acc / ntot
         maxdev[b] = np.max(np.abs(sim - pred) / se)
         maxstep[b] = np.max(np.diff(sim)) if depth > 1 else 0.0
-    crit = float(np.percentile(maxdev, 95))
-    crit_step = float(np.percentile(maxstep, 95))
+    level = 100.0 * (1.0 - 0.05 / DESIGN["h3_family_cells"])      # family-wise 5% per sample
+    crit = float(np.percentile(maxdev, level))
+    crit_step = float(np.percentile(maxstep, level))
     dev_vec = np.abs(obs - pred) / se
     obs_dev = float(np.max(dev_vec))
     inside = bool(obs_dev <= crit and np.all(np.abs(obs - pred)[zero] < 1e-12))
@@ -1927,7 +2039,8 @@ def _h3_cell(args):
     mono = bool(obs_step <= crit_step + 1e-12)
     f1_ok = bool(np.max(np.abs(obs - pred)) <= f1_tol) if f == 1.0 else True
     cell_ok = bool(mono and inside and f1_ok)
-    return f"{shape}|f{f}", dict(max_positive_step=obs_step, step_critical=crit_step, monotone=mono,
+    degenerate = bool(np.all(pred == 0) and np.all(obs == 0))
+    return f"{shape}|f{f}", dict(max_positive_step=obs_step, step_critical=crit_step, monotone=mono, degenerate_all_zero=degenerate,
                                  inside_band=inside, band_critical=crit, observed_maxdev=obs_dev,
                                  f1_within_tol=f1_ok, passed=cell_ok, observed=obs.round(4).tolist(),
                                  predicted=pred.round(4).tolist(), max_abs_gap=float(np.abs(obs - pred).max()))
@@ -2059,21 +2172,37 @@ def h6_gate(dev: pd.DataFrame, ev: pd.DataFrame, design: dict, lam: float) -> di
 # ---- H5 shape ----------------------------------------------------------------------
 
 def h5_shape(df: pd.DataFrame, design: dict) -> dict:
+    """H5(a) matched-count blocks as specified: chain below star and below mesh by >= 0.05 (unchanged).
+    H5(b) representative blocks: chain below star by >= 0.05, chain below mesh at each degree (CI > 0).
+    Blocks are resampled within their (f) or (f, entry share) cell."""
+    out, ok = {}, True
     d = df[df["family"] == "matched"]
     piv = d.pivot_table(index=["f_target", "block"], columns="shape", values="Y").reset_index().dropna()
-    strata = [g.index.values for _, g in piv.groupby("f_target")]     # blocks resampled within f
-    out, ok = {}, True
-    def contrast(a_, b_):
-        v = (piv[a_] - piv[b_]).values
-        bs = boot_over(strata, lambda ix: v[np.concatenate(ix)].mean(), design["n_boot"], design["boot_seed"])
+    strata = [g.index.values for _, g in piv.groupby("f_target")]
+    def contrast(piv_, strata_, a_, b_):
+        v = (piv_[a_] - piv_[b_]).values
+        bs = boot_over(strata_, lambda ix: v[np.concatenate(ix)].mean(), design["n_boot"], design["boot_seed"])
         return v, bs
-    for other in ("matched_star", "matched_mesh"):
-        v, bs = contrast(other, "matched_chain")
+    for other, need in (("matched_star", design["h5_min_delta"]), ("matched_mesh", design["h5_min_delta"])):
+        v, bs = contrast(piv, strata, other, "matched_chain")
         lo, hi = ci(bs)
-        out[f"{other}_minus_chain"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=(lo, hi))
-        ok = ok and lo > 0 and v.mean() >= design["h5_min_delta"]
-    v, bs = contrast("matched_star", "matched_mesh")
-    out["star_minus_mesh_reported"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=ci(bs))
+        out[f"a_{other}_minus_chain"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=(lo, hi), min_required=need)
+        ok = ok and lo > 0 and v.mean() >= need
+    v, bs = contrast(piv, strata, "matched_star", "matched_mesh")
+    out["a_star_minus_mesh_reported"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=ci(bs))
+    r = df[df["family"] == "representative"]
+    if len(r):
+        piv = r.pivot_table(index=["f_target", "entry_share", "block"], columns="shape", values="Y").reset_index().dropna()
+        strata = [g.index.values for _, g in piv.groupby(["f_target", "entry_share"])]
+        cols = [c_ for c_ in piv.columns if str(c_).startswith("rep_") and c_ != "rep_chain"]
+        for other in cols:
+            need = design["h5_min_delta"] if other == "rep_star" else 0.0
+            v, bs = contrast(piv, strata, other, "rep_chain")
+            lo, hi = ci(bs)
+            out[f"b_{other}_minus_chain"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=(lo, hi), min_required=need)
+            ok = ok and lo > 0 and v.mean() >= need
+        curve = r.groupby(["shape", "entry_share"])["Y"].mean().unstack("entry_share").round(4)
+        out["b_entry_share_curve"] = {str(k): {str(e): float(v_) for e, v_ in row.items()} for k, row in curve.iterrows()}
     return dict(contrasts=out, passed=bool(ok))
 
 
@@ -2126,19 +2255,20 @@ def implementation_checks(run_dir: str, arch: pd.DataFrame, nodes: pd.DataFrame,
     canon = arch[arch["family"] == "canonical"]
     exact = (canon["n_A_assigned"] == (canon["f_target"] * canon["N_target"]).round()).all() if len(canon) else True
     res["IC4_exact_canonical_gate"] = dict(passed=bool(exact), note="A count equals round(fN) before any removal variant")
-    mt = arch[arch["family"] == "matched"]
+    mt = arch[arch["family"].isin(["matched", "representative"])]
     ok5 = True
-    mn = nodes[nodes["arch_id"].isin(mt["arch_id"])].merge(mt[["arch_id", "block", "n_relations"]], on="arch_id")
+    mn = nodes[nodes["arch_id"].isin(mt["arch_id"])].merge(mt[["arch_id", "block", "family", "n_relations"]], on="arch_id")
     for block, g in mn.groupby("block"):
         sigs = set()
+        fam = g["family"].iloc[0]
         for aid, ga in g.groupby("arch_id"):
             sig = tuple(sorted(zip(ga["node"], ga["I_native"], ga["X_native"], ga["A_native"],
                                    ga["x_prob"].round(12), ga["a_prob"].round(12))))
-            sigs.add((sig, int(ga["n_relations"].iloc[0])))
+            sigs.add((sig, int(ga["n_relations"].iloc[0]) if fam == "matched" else 0))
         ok5 = ok5 and len(sigs) == 1
     res["IC5_matched_blocks"] = dict(passed=bool(ok5), note="node set, native corners, gate draws and relation count identical within every block")
     exp_counts = pd.Series([f"{t['meta']['sample']}|{t['family']}|{t.get('shape', 'mixed')}|{t.get('cell', '')}|"
-                            f"{t.get('variant', '' if t['family'] == 'mixed' else 'intact')}"
+                            f"{t.get('variant', '' if t['family'] == 'mixed' else (t['shape'] if t['family'] == 'representative' else 'intact'))}"
                             for t in all_tasks(DESIGN, pilot)]).value_counts()
     got = (arch["sample"] + "|" + arch["family"] + "|" + arch["shape"] + "|" + arch["cell"].astype(str) + "|" + arch["variant"].astype(str)).value_counts()
     missing = {k: int(v) for k, v in exp_counts.items() if got.get(k, 0) != v}
@@ -2164,8 +2294,9 @@ def implementation_checks(run_dir: str, arch: pd.DataFrame, nodes: pd.DataFrame,
 def exploratory(arch: pd.DataFrame, nodes: pd.DataFrame, pilot: bool) -> pd.DataFrame:
     rows = []
     hs = arch[arch["shape"] == "star_hubsource"]
-    for (f, n), g in hs.groupby(["f_target", "n"]):
-        rows.append(dict(section="star_hub_source", key=f"f{f}_n{n}", value=float(g["Y"].mean()), note="Y with the source as the plane controller"))
+    for (f, n, N), g in hs.groupby(["f_target", "n", "N_target"]):
+        rows.append(dict(section="star_hub_source", key=f"f{f}_N{int(N)}_n{int(n)}_share{n / (N - 1):.2f}", value=float(g["Y"].mean()),
+                         note="Y with the source as the plane controller; share = members / (N - 1)"))
     mt = arch[arch["family"] == "matched"]
     for f, g in mt.groupby("f_target"):
         p = g.pivot_table(index="block", columns="shape", values="Y")
@@ -2187,11 +2318,15 @@ def exploratory(arch: pd.DataFrame, nodes: pd.DataFrame, pilot: bool) -> pd.Data
     top = mx[mx["impact"] >= mx["impact"].quantile(0.9)]
     rows.append(dict(section="value_weighted", key="p_top_decile_impact", value=float(top["p"].mean()), note="mean p of the highest-impact decile of nodes (mixed)"))
     for fam, g in arch.groupby("family"):
-        rows.append(dict(section="variance_split", key=fam, value=float(g["var_share_source"].mean()), note="share of within-architecture variance explained by the source"))
+        multi = g[g["sources"].astype(str).str.count(";") >= 1]
+        rows.append(dict(section="variance_split", key=fam, value=float(multi["var_share_source"].mean()) if len(multi) else float("nan"),
+                         note="share of within-architecture variance explained by the source; n/a for single-source families"))
     fc = [c for c in arch.columns if c.startswith("f_") and c[2:] in FACTORS_DEV]
     if fc:
         C = arch[arch["family"] == "mixed"][fc].corr().abs()
-        rows.append(dict(section="factor_correlations", key="max_abs_offdiag", value=float(np.nanmax(C.values - np.eye(len(fc)))), note="Latin hypercube caveat"))
+        M = C.values - np.eye(len(fc))
+        i, j = np.unravel_index(np.nanargmax(M), M.shape)
+        rows.append(dict(section="factor_correlations", key="max_abs_offdiag", value=float(M[i, j]), note=f"Latin hypercube caveat; pair {fc[i]} x {fc[j]}"))
     if pilot:
         for m_ in NODE_MEASURES:
             if m_ in mx.columns and mx[m_].std() > 0:
@@ -2369,16 +2504,21 @@ def _fmt_ci(c):
 
 
 def write_summary(run_dir: str, final: dict, by_sample: dict, ic: dict, fz: dict, rec_ok: bool, pilot: bool,
-                  n: dict, exp: pd.DataFrame) -> str:
-    L = [f"# Paper 4A v{VERSION} summary: {'PILOT (no verdicts)' if pilot else 'CONFIRMATORY'}", "",
-         f"- Run: {os.path.basename(run_dir)}  |  {fz['note']}  |  record {'matches' if rec_ok else 'DIFFERS'}",
-         f"- Architectures: " + ", ".join(f"{k} {v}" for k, v in n.items()), "",
-         "## Verdicts (pass required on 4201, 4202 and 4301 separately)", "",
-         "| H | Verdict | 4201 | 4202 | 4301 |", "|---|---|---|---|---|"]
+                  n: dict, exp: pd.DataFrame, rec_diffs: Optional[List[str]] = None, seeds: Optional[dict] = None) -> str:
+    L = [f"# Paper 4A v{VERSION} summary: {'PILOT (pilot seeds only, no verdicts)' if pilot else 'CONFIRMATORY'}", "",
+         f"- Run: {os.path.basename(run_dir)}  |  {fz['note']}  |  record " +
+         ("matches" if rec_ok else "DIFFERS in " + ", ".join(rec_diffs or []) + " (analysis re-run under exploratory=True; not citable)"),
+         f"- Seeds in this run: {seeds}" if seeds else "",
+         f"- Architectures: " + ", ".join(f"{k} {v}" for k, v in n.items()),
+         "- Intervals: 95% percentile bootstrap over architectures (cells, bases, blocks or whole architectures with all sources and nodes); never over runs or node rows", "",
+         ("## Sample results (pilot seeds; verdicts require 4201, 4202 and 4301, which are untouched)" if pilot else
+          "## Verdicts (pass required on 4201, 4202 and 4301 separately)"), ""]
+    cols = list(by_sample)
+    L += ["| H | Verdict | " + " | ".join(cols) + " |", "|---|---|" + "---|" * len(cols)]
     def mark(v):
         return "pass" if v is True else "fail" if v is False else str(v)
     for h in ("H1", "H2", "H3", "H4", "H5", "H6"):
-        L.append(f"| {h} | {mark(final.get(h))} | " + " | ".join(mark(by_sample.get(s, {}).get(h, {}).get("passed", "n/a")) for s in ("rep4201", "rep4202", "held4301")) + " |")
+        L.append(f"| {h} | {mark(final.get(h))} | " + " | ".join(mark(by_sample.get(s, {}).get(h, {}).get("passed", "n/a")) for s in cols) + " |")
     L += ["", "## Implementation checks", ""]
     for k, v in ic.items():
         L.append(f"- {k}: {'pass' if v.get('passed') else 'FAIL'}" + (f" ({v['notes'][:3]})" if v.get("notes") else ""))
@@ -2389,7 +2529,7 @@ def write_summary(run_dir: str, final: dict, by_sample: dict, ic: dict, fz: dict
         if h1:
             L.append(f"- H1 mesh: Spearman(f, midpoint) {h1['spearman_f_midpoint']:+.2f} {_fmt_ci(h1['spearman_ci'])}, CV(midpoint x f) {h1['cv']:.2f}; criteria {h1['criteria']}")
             for f, r in h1["per_f"].items():
-                L.append(f"    f={f}: midpoint d {r['midpoint']:.4f} CI [{r['midpoint_ci'][0]:.4f}, {r['midpoint_ci'][1]:.4f}], predicted d* {r['d_star_pred']:.4f}, plateau gap {r['plateau_gap']:.3f}, rise {r['rise']}")
+                L.append(f"    f={f}: midpoint d {r['midpoint']:.4f} CI [{r['midpoint_ci'][0]:.4f}, {r['midpoint_ci'][1]:.4f}], nominal d* {r['d_star_pred']:.4f} (midpoint/d* {r['midpoint'] / r['d_star_pred']:.2f}; H1 tests scaling with f, not the level), plateau gap {r['plateau_gap']:.3f}, rise {r['rise']}")
         h2 = v.get("H2", {})
         if h2:
             worst = min(h2["cells"].items(), key=lambda kv: kv[1]["ci"][0])
@@ -2397,17 +2537,20 @@ def write_summary(run_dir: str, final: dict, by_sample: dict, ic: dict, fz: dict
         h3 = v.get("H3", {})
         if h3:
             for k_, c in h3["cells"].items():
-                L.append(f"- H3 {k_}: max +step {c['max_positive_step']:.3f} (crit {c['step_critical']:.3f}), max std dev {c['observed_maxdev']:.2f} (crit {c['band_critical']:.2f}), max gap {c['max_abs_gap']:.3f}, pass {c['passed']}")
+                L.append(f"- H3 {k_}: max +step {c['max_positive_step']:.4f} (crit {c['step_critical']:.4f}), max std dev {c['observed_maxdev']:.2f} (crit {c['band_critical']:.2f}), max gap {c['max_abs_gap']:.4f}, pass {c['passed']}" + (" [degenerate: chain broken at the first node in every architecture, all zero]" if c.get('degenerate_all_zero') else ""))
         h4 = v.get("H4", {})
         if h4:
             co = h4["coefficients"]
-            L.append(f"- H4 position (Firth, ridge {h4['lam']}): distance {co['gated_distance']['estimate']:+.3f} {_fmt_ci(co['gated_distance']['ci'])}, "
+            L.append(f"- H4 position (Firth, ridge {h4['lam']}; {h4['n_architectures']} architectures, {h4['n_rows']} rows; cluster bootstrap over architectures): distance {co['gated_distance']['estimate']:+.3f} {_fmt_ci(co['gated_distance']['ci'])}, "
                      f"log redundancy {co['log_redundancy']['estimate']:+.3f} {_fmt_ci(co['log_redundancy']['ci'])}, "
                      f"interaction {co['dist_x_red']['estimate']:+.3f} {_fmt_ci(co['dist_x_red']['ci'])}; criteria {h4['criteria']}")
         h5 = v.get("H5", {})
         if h5:
             for k_, c in h5["contrasts"].items():
-                L.append(f"- H5 {k_}: {c['mean']:+.3f} {_fmt_ci(c['ci'])} (blocks {c['n_blocks']})")
+                if k_ == "b_entry_share_curve":
+                    L.append("- H5 entry-share curve (Y by shape): " + "; ".join(f"{sh}: " + ", ".join(f"{e}={y:.3f}" for e, y in row.items()) for sh, row in c.items()))
+                else:
+                    L.append(f"- H5 {k_}: {c['mean']:+.3f} {_fmt_ci(c['ci'])} (blocks {c['n_blocks']}" + (f", min {c['min_required']}" if 'min_required' in c else "") + ")")
         h6 = v.get("H6", {})
         if h6:
             L.append(f"- H6 gate (primary, induced-subgraph rival): C gated {h6['c_gated']:.3f} vs {h6['c_induced']:.3f}, delta {h6['delta_c']:+.3f} {_fmt_ci(h6['ci'])} (eligible rows {h6['n_rows']}, architectures {h6['n_architectures']})")
@@ -2455,8 +2598,9 @@ def analyse(run_dir: str, design: dict, fz: dict, rec_ok: bool, rec_diffs: List[
                "rep4202": ("replication", design["seeds"]["replication"][1] if len(design["seeds"]["replication"]) > 1 else None),
                "held4301": ("heldout", design["seeds"]["heldout"])}
     if pilot:
-        samples = {"rep4201": ("replication", design["pilot_seeds"]["replication"][0]), "rep4202": ("replication", None),
-                   "held4301": ("heldout", design["pilot_seeds"]["heldout"])}
+        ps = design["pilot_seeds"]
+        samples = {f"pilot_rep{ps['replication'][0]}": ("replication", ps["replication"][0]),
+                   f"pilot_held{ps['heldout']}": ("heldout", ps["heldout"])}
     by_sample, preds = {}, []
     for label, (role, seed) in samples.items():
         if seed is None:
@@ -2489,7 +2633,7 @@ def analyse(run_dir: str, design: dict, fz: dict, rec_ok: bool, rec_diffs: List[
     final = {}
     for h in ("H1", "H2", "H3", "H4", "H5", "H6"):
         if pilot:
-            final[h] = "NO VERDICT (pilot)"
+            final[h] = "NO VERDICT (pilot seeds only)"
             continue
         reps = [by_sample.get(k, {}).get(h, {}).get("passed") for k in ("rep4201", "rep4202")]
         held = by_sample.get("held4301", {}).get(h, {}).get("passed")
@@ -2501,6 +2645,11 @@ def analyse(run_dir: str, design: dict, fz: dict, rec_ok: bool, rec_diffs: List[
             final[h] = False
         else:
             final[h] = "INCOMPLETE"
+    with open(os.path.join(run_dir, "verdicts.json"), "w") as f:
+        json.dump(dict(code_version=CODE_VERSION, spec_version=SPEC_VERSION, code_sha256=code_hash(), pilot=pilot,
+                       stage="hypotheses complete; exploratory, docker and figures pending", final=final,
+                       h4_ridge=dict(chosen=lam, cv_curve={str(k): v for k, v in curve.items()}),
+                       by_sample=by_sample, implementation_checks=ic), f, indent=2, default=str)
     exp = exploratory(arch, nodes, pilot)
     exp.to_csv(os.path.join(run_dir, "exploratory.csv"), index=False)
     if not pilot:
@@ -2531,7 +2680,8 @@ def analyse(run_dir: str, design: dict, fz: dict, rec_ok: bool, rec_diffs: List[
     rec["h4_ridge"] = dict(chosen=lam, cv_curve={str(k): v for k, v in curve.items()})
     with open(rec_path, "w") as f_:
         json.dump(rec, f_, indent=2)
-    txt = write_summary(run_dir, final, by_sample, ic, fz, rec_ok, pilot, n, exp)
+    txt = write_summary(run_dir, final, by_sample, ic, fz, rec_ok, pilot, n, exp, rec_diffs,
+                        {k: v for k, v in ic.get("IC7_samples", {}).get("seeds", {}).items()})
     with open(os.path.join(run_dir, "verdicts.txt"), "w", encoding="utf-8") as f:
         f.write(txt)
     print("\n" + txt)
