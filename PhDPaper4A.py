@@ -1,79 +1,64 @@
 # -*- coding: utf-8 -*-
 """
-PhDPaper4A: Paper 4A experiment driver and measurement analysis, one file
-=========================================================================
+PhDPaper4A v11: Structure. Per-node compromise probability on cemt_core v0.8
+==============================================================================
 
-Paper 4A asks which measurements of a cyber system predict its collapse
-behaviour on the frozen cemt_core substrate. Everything is in this file,
-including the frozen cemt_core v0.8 model, embedded byte for byte and
-hash-checked at load. Nothing is imported from the cemt_core repository.
-The driver varies scenario conditions only, never the embedded mechanics.
+Implements "Paper 4A Specification v12: Structure" (20 September 2026).
 
-Confirmatory hypotheses as implemented (check the wording against the draft)
-  H1   additive vs single axis. The fixed additive composite ADD beats EACH of
-       its six constituent single axes (I, A, X, T, rem, vis).
-  H2   multiplicative vs additive. F1 = I*A*X*T/(rem*vis) beats ADD.
-  H2c  realised conjunction vs product. FC = Cap*T/(rem*vis) beats F1, where
-       Cap is the fraction of estate nodes on which I, X and A all hold,
-       counting supply through relations (Paper 1B: conferring planes supply
-       A, connections and directing planes supply I), rather than the product
-       of marginal rates. The node-level co-location measure C_IAX (Paper 1A
-       instances only) is reported alongside as FCn, descriptively.
-  H3   relational structure. A model on node-level measures plus realised
-       relation-class quantities plus relation operators (Fan-out, Cut by
-       class, governance crossing) beats the same estimator on node-level
-       measures plus conjunction.
-  H4   STA completeness. A model on full-STA measures beats each model that
-       lacks one dimension (Phi_ST, Phi_SA, Phi_TA), all trained on full-STA
-       outcomes and evaluated in a held-out regime (open boundary).
+The paper estimates the probability that each node in a system is compromised
+given delivery from a compromised external source, as a function of structure
+alone, and shows that the frozen cemt_core v0.8 model reproduces the imported
+laws of propagation (mesh percolation, hub fragility, chain decay) when
+execution is gated by the node's Cyber Triangle (I, X, A). Time and Adaptation
+are switched off (Paper 3A's M_S); 4B and 4C re-enable them on the same saved
+architectures.
 
-Decision rule (pre-specified, identical for every confirmatory comparison)
-  Outcome   the scenario collapse rate itself (fraction of trials meeting the
-            frozen sustained-collapse rule); no scenario-level threshold.
-  Entry     penetration is assumed, compromise is not (decision 2026-09-20).
-            Each trial starts with the attacker at a uniformly chosen
-            Interface node; that node is compromised only if I, X and A hold
-            there structurally and the gate x_prob * a_prob * T passes
-            (entry_certain stays False). The conditional rate, collapse
-            given entry compromise, is recorded from the same trials and
-            reported descriptively only.
-  Measure   Harrell's concordance C between score and collapse rate.
-  Pass      Delta C >= MIN_DELTA_C and BH-adjusted p < ALPHA, where p is a
-            two-sided paired bootstrap over scenarios and the BH family is
-            every confirmatory comparison in H1 to H4 together. H1 and H4
-            pass only if every one of their comparisons passes.
-  Samples   development: closed boundary, headline seed. Confirmation: closed
-            boundary, independent-sample replication seeds (new scenarios,
-            not re-seeded trials). Held-out regime: open boundary.
-            ADD standardisation and every fitted model are fixed on the
-            development sample and applied unchanged elsewhere.
-  Secondary the collapse-rate >= 0.15 label is kept only as a stated
-            operational definition, for the AUC screen and DeLong tests.
+One self-contained file. The frozen cemt_core v0.8 is embedded byte for byte
+and hash-checked at load (digest 97dbae47); a mismatch aborts. Third-party
+libraries: numpy, pandas, scipy only. Everything new is driver-level or
+analysis-level: no mechanic of the frozen core changes.
 
-Scenario conditions set by the driver (decision 1, 2026-09-20)
-  The frozen generator sets Execution Pathway and Authority present on every
-  node and creates no conferring control planes, so conjunction could not be
-  varied independently of the marginal product, Cut for X and A was always
-  zero, and Authority could never be relationally supplied. The driver
-  therefore sets per-node I, X and A presence with a Gaussian-copula
-  co-location parameter (marginal rates preserved) and adds conferring
-  control planes, some with external issuers. Adaptation is sampled as a
-  policy composition: remediation capability, whether trust revocation is
-  enabled, and the policy threshold theta. These are spec-level scenario
-  conditions; the model mechanics are untouched. The rates authority_rate and
-  execution_rate remain the per-node gating probabilities given presence.
+Entry (specification Sections 5, 6.3, 8): every architecture carries external
+source nodes (relay, update, registry). A run pins entry to one source, which
+is compromised at step 0 by assumption (entry_certain) and delivers on every
+relation it supplies; each receiver's triangle decides whether the payload
+executes there. A node cannot pass anything on until it has executed;
+carriage by uncompromised estate nodes is a declared v0.9 candidate.
 
-Run from Visual Studio with F5 (RUN_CONFIG below), or from a prompt:
-  python PhDPaper4A.py --mode smoke
-  python PhDPaper4A.py --mode analyse --run-id <existing run id>
+Hypotheses (Section 10; supported only if every criterion holds on 4201, 4202
+and 4301 separately; both replications passing with a bounded held-out failure
+is "supported under replication, not generalised"):
+  H1 mesh   percolation threshold gated by f: (a) sigmoid rise per f, (b) the
+            midpoint density falls with f, (c) midpoint x f roughly constant
+            (CV < 0.25), (d) plateau within 0.05 of f.
+  H2 star   deleting the hub costs more than deleting five leaves, both forms,
+            every f and n (paired CI lower bound > 0).
+  H3 chain  max positive adjacent-depth step and max standardised deviation
+            both inside their simulated 95% critical values, and within 0.05
+            of prediction at f = 1.
+  H4 pos    Firth binomial regression of p_i on gated distance, log(1+redundancy)
+            and their interaction: distance < 0, redundancy > 0, interaction > 0,
+            fitted separately on each evaluation sample.
+  H5 shape  matched-count blocks: chain below star and mesh by >= 0.05.
+  H6 gate   gated model beats the eligible-subgraph ungated model by >= 0.02
+            concordance, paired CI lower bound > 0, fitted on development only;
+            the whole-graph ungated rival is reported as secondary.
+Implementation checks IC1..IC8 (Section 11) abort the run on failure.
+
+Modes: PILOT (pilot seeds, reduced budget, broad screen, no verdicts), TIME
+(budget estimate), ALL (generate then analyse), GENERATE (resumable),
+ANALYSE (existing run). Quick read: P4A_summary.md in the run directory.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import gzip
 import hashlib
+import io
 import json
+import math
 import os
 import re
 import sys
@@ -84,246 +69,98 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
-from sklearn.ensemble import HistGradientBoostingRegressor
-from sklearn.linear_model import LogisticRegression, Ridge
-from sklearn.metrics import roc_auc_score, roc_curve
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import PolynomialFeatures, StandardScaler
-
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+from scipy import optimize, stats
+from scipy.stats import qmc
 
 # ============================================================================
-# VERSION (bump on every edit)
+# VERSION (single source of truth for code, specification and tag)
 # ============================================================================
-VERSION = 8
+VERSION = 12
 CODE_VERSION = f"PhDPaper4A v{VERSION} (2026-09-20)"
+SPEC_VERSION = "Paper 4A Specification v12: Structure (2026-09-20)"
 
 # >>> RUN_CONFIG (excluded from the analysis-code hash)
 RUN_CONFIG = dict(
-    # "ask"      show a menu at start-up (default)
-    # "smoke"    small end-to-end run on the pilot seeds, minutes, not for the paper
-    # "all"      generate every confirmatory sample and the OAT sweep, then analyse
-    # "generate" generate only (resumable)
-    # "analyse"  analyse an existing run directory
-    mode="ask",
+    mode="ask",                # ask | pilot | all | generate | analyse | time
     out_root=r"C:\Users\Paul.Guckian\Documents\Phd\P4A",
-    run_id=None,               # None = new timestamped run; set an id to resume or analyse
+    run_id=None,               # None = new run; set to resume or analyse
     workers=None,              # None = cpu_count - 2
-    exploratory=False,         # True allows analysis despite a pre-specification
-                               # mismatch; the output is then marked not citable
+    exploratory=False,         # allow analysis despite a record mismatch (not citable)
+    write_runs=True,           # per-run records to runs.csv.gz (large)
+    write_specs=True,          # one scenario file per architecture in specs/
+    v8_run_dir=None,           # optional: path of the v8 run for the exploratory reanalysis
 )
 # <<< RUN_CONFIG
 
 # ============================================================================
-# PRE-SPECIFICATION (everything below is recorded and enforced)
+# PRE-SPECIFICATION (recorded in run_record.json and enforced at ANALYSE)
 # ============================================================================
 DESIGN = dict(
-    # Confirmatory seeds. Never used by any pilot or smoke run: the v5 and v6
-    # pilots (seeds 231, 543, 311) informed design decisions, so their
-    # scenarios are kept out of every confirmatory sample.
-    dev_seed=4101,                  # closed boundary, development
-    replication_seeds=[4201, 4202], # closed boundary, independent-sample replication
-    open_seed=4301,                 # open boundary, held-out regime (H4)
-    n_scenarios=1000,               # per seed
-    n_trials=500,
-    oat=True, oat_levels=9, oat_trials=200,
-    min_delta_c=0.02,
-    alpha=0.05,
-    n_boot=2000,
-    boot_seed=20260920,
-    model_seed=20260920,
-    secondary_threshold=0.15,
-    secondary_thresholds=[0.10, 0.15, 0.20, 0.25, 0.30],
-    n_perm=1000,
-)
-# Smoke and pilot runs use the pilot seeds only, never the confirmatory ones.
-SMOKE_DESIGN = dict(dev_seed=231, replication_seeds=[543], open_seed=311,
-                    n_scenarios=40, n_trials=20,
-                    oat_levels=3, oat_trials=10, n_boot=100, n_perm=20)
-
-# (name, low, high, scale, target)
-#   scale : lin | log | int | logint
-#   target: gen (generate_spec), rate (RateSpec), adapt, time, cond (driver
-#           scenario condition applied after generation)
-# Not sampled because inert in the frozen layers: RateSpec.synchrony,
-# cp_scaling_factor, authority_boost (layer 2 uses min(1, authority_boost)).
-SAMPLED: List[Tuple[str, float, float, str, str]] = [
-    # IAE presence and co-location (driver conditions)
-    ("interface_rate",              0.10, 0.90, "lin",    "cond"),
-    ("x_presence_rate",             0.10, 0.90, "lin",    "cond"),
-    ("a_presence_rate",             0.10, 0.90, "lin",    "cond"),
-    ("colocation",                  0.00, 0.90, "lin",    "cond"),
-    # conferring control planes (driver conditions)
-    ("n_conferring_planes",         0,    6,    "int",    "cond"),
-    ("conferring_span",             0.02, 0.40, "lin",    "cond"),
-    ("frac_external_issuers",       0.00, 0.60, "lin",    "cond"),
-    # threat and gating (payload side, outside the triad)
-    ("threat_capability",           0.50, 3.00, "log",    "rate"),
-    ("authority_rate",              0.10, 0.90, "lin",    "rate"),
-    ("execution_rate",              0.10, 0.90, "lin",    "rate"),
-    # defence (policy composition, Paper 3A fixed policy)
-    ("remediation_capability",      0.30, 1.00, "lin",    "adapt"),
-    ("revoke_enabled",              0,    1,    "int",    "adapt"),
-    ("policy_threshold",            0.00, 0.20, "lin",    "adapt"),
-    ("visibility",                  0.30, 1.00, "lin",    "gen"),
-    # structure knobs of the frozen generator
-    ("avg_internal_zones",          0.50, 2.00, "lin",    "gen"),
-    ("dependency_factor",           0.50, 2.00, "lin",    "gen"),
-    ("avg_channels_per_node",       0.00, 15.0, "lin",    "gen"),
-    ("n_channel_pool",              10,   50,   "logint", "gen"),
-    ("frac_external_channel_roots", 0.00, 0.60, "lin",    "gen"),
-    ("avg_control_planes_per_node", 0.00, 5.00, "lin",    "gen"),
-    ("n_control_plane_pool",        2,    10,   "logint", "gen"),
-    ("global_cp_span",              0.30, 1.00, "lin",    "gen"),
-    # rates
-    ("control_plane_takeover_rate", 0.01, 0.95, "lin",    "rate"),
-    ("beta_conn",                   0.05, 0.30, "lin",    "rate"),
-    ("control_variance",            0.00, 0.50, "lin",    "rate"),
-    ("execution_drift_boost",       0.00, 1.00, "lin",    "rate"),
-    # time
-    ("latency_steps",               0,    20,   "int",    "time"),
-    ("drift_increment",             0.00, 1.00, "lin",    "time"),
-]
-
-# Open-boundary regime only: exogenous compromise of external nodes.
-OPEN_SAMPLED = [
-    ("phantom_cp_rate",             0.01, 0.10, "lin",    "rate"),
-    ("phantom_channel_rate",        0.01, 0.10, "lin",    "rate"),
-]
-
-FIXED = dict(
-    node_count=500, n_zones=80,
-    synchrony=0.5, simple_policy=True,                  # Paper 3A fixed policy
-    tau_a=0.3,                                          # inert under simple_policy
-    max_steps=50, exfil_dwell_steps=5, ablation="STA",
-    entry_certain=False,        # penetration assumed, compromise not
-    conditional_min_entries=5,  # min entry compromises for the conditional rate
-    closed_phantom_rates=0.0,
+    seeds=dict(development=4101, replication=[4201, 4202], heldout=4301),
+    pilot_seeds=dict(development=231, replication=[543], heldout=311),
+    runs_per_arch=1000, pilot_runs_per_arch=100,
+    arch_per_cell=10, pilot_arch_per_cell=10,         # the pilot uses the full design at fewer runs
+    matched_blocks=20, pilot_matched_blocks=20,
+    mixed_per_sample=400, pilot_mixed_per_sample=400,
+    n_boot=2000, pilot_n_boot=200, boot_seed=20260920, model_seed=20260920,
+    f_levels=[0.2, 0.4, 0.6, 0.8, 1.0],
+    mesh_grid_exponents=[-2 + 5 * j / 11 for j in range(12)],   # d_j = min(0.95, d*_{N,f} 2^(-2+5j/11))
+    mesh_density_cap=0.95,
+    star_n=[10, 20, 40, 59], star_leaf_removals=[1, 5],
+    chain_depth=20,
+    n_canonical=60, n_canonical_heldout=120,
+    h1_cv_max=0.25, h1_plateau_tol=0.05, h3_f1_tol=0.05,
+    h5_min_delta=0.05, h6_min_delta_c=0.02, alpha=0.05,
+    docker_per_shape=3, docker_n=30, docker_f=0.6, docker_seeds=20,
+    redundancy_cap=5,
+    h4_ridge_grid=[0.0, 0.01, 0.1, 1.0, 10.0], h4_cv_folds=5,
 )
 
-BASELINE = dict(
-    interface_rate=0.75, x_presence_rate=0.75, a_presence_rate=0.75, colocation=0.3,
-    n_conferring_planes=2, conferring_span=0.1, frac_external_issuers=0.2,
-    threat_capability=1.0, authority_rate=0.55, execution_rate=0.55,
-    remediation_capability=0.9, revoke_enabled=0, policy_threshold=0.0, visibility=0.85,
-    avg_internal_zones=1.0, dependency_factor=2.0, avg_channels_per_node=3.0,
-    n_channel_pool=25, frac_external_channel_roots=0.3,
-    avg_control_planes_per_node=2.5, n_control_plane_pool=5, global_cp_span=0.3,
-    control_plane_takeover_rate=0.08, beta_conn=0.12, control_variance=0.1,
-    execution_drift_boost=0.8, latency_steps=2, drift_increment=0.08,
-)
-OAT_SEED = 999_001
-
-# ---- measurement groups (all computed before any trial is run) -------------
-EXOG = ["threat_capability", "authority_rate", "execution_rate", "beta_conn",
-        "control_variance", "control_plane_takeover_rate"]
-S_NODE = ["I_real", "X_real", "A_real"]
-S_CONJ = ["C_IAX", "capability_supplied"]
-S_REL = ["conn_density_realised", "channel_per_node", "directing_per_node",
-         "conferring_per_node"]
-S_OP = ["fanout_max_total", "fanout_mean_directing",
-        "fanout_max_directing", "fanout_max_conferring", "fanout_max_sos",
-        "cut_I_per_node", "cut_X_per_node", "cut_A_per_node",
-        "cut_connection_per_node", "cut_channel_per_node", "cut_directing_per_node",
-        "cut_conferring_per_node", "cut_sos_per_node", "cut_max_single_supplier",
-        "sos_row_fraction"]
-T_F = ["latency_steps", "drift_increment", "execution_drift_boost"]
-A_F = ["remediation_capability", "vis_real", "revoke_enabled", "policy_threshold"]
-S_ALL = S_NODE + S_CONJ + S_REL + S_OP
-
-FEATURE_SETS = {
-    # H3 nested structure sets (T, A and exogenous held in every set)
-    "Phi_node": EXOG + T_F + A_F + S_NODE,
-    "Phi_conj": EXOG + T_F + A_F + S_NODE + S_CONJ,
-    "Phi_rel":  EXOG + T_F + A_F + S_NODE + S_CONJ + S_REL,
-    "Phi_op":   EXOG + T_F + A_F + S_ALL,
-    # H4 STA sets
-    "Phi_STA":  EXOG + S_ALL + T_F + A_F,
-    "Phi_ST":   EXOG + S_ALL + T_F,
-    "Phi_SA":   EXOG + S_ALL + A_F,
-    "Phi_TA":   EXOG + T_F + A_F,
+# Mixed-architecture factors (Section 6.2): name -> (low, high, kind)
+FACTORS_DEV = {
+    "n_nodes": (40, 120, "int"),
+    "p_I": (0.20, 0.90, "lin"), "p_X": (0.20, 0.90, "lin"), "p_A": (0.20, 0.90, "lin"),
+    "colocation": (0.0, 0.8, "lin"),
+    "conn_density": (0.01, 0.15, "lin"),
+    "chan_density": (0.005, 0.05, "lin"),
+    "conf_count": (0, 3, "int"), "conf_membership": (0.05, 0.50, "lin"),
+    "dir_count": (0, 3, "int"), "dir_fanout": (0.05, 0.60, "lin"),
+    "share_external": (0.0, 1.0, "lin"),
+    "bundle_chan": (0.0, 1.0, "lin"), "bundle_dir": (0.0, 1.0, "lin"),
+    "relay_share": (0.20, 1.00, "lin"),
+    "registry_targets": (1, 5, "int"),
 }
-ESTIMATOR = dict(kind="HistGradientBoostingRegressor on logit(collapse rate)",
-                 max_iter=300, learning_rate=0.05, max_leaf_nodes=15,
-                 min_samples_leaf=20, l2_regularization=1.0)
+FACTORS_HELDOUT = dict(FACTORS_DEV, n_nodes=(120, 200, "int"), conn_density=(0.15, 0.30, "lin"),
+                       chan_density=(0.05, 0.10, "lin"), dir_fanout=(0.60, 0.95, "lin"))
+SOURCE_TYPES = ["relay", "update", "registry"]
 
-# ---- fixed-form metrics (canonical symbol -> column) -----------------------
-COLUMN_MAP: Dict[str, str] = {
-    "I": "I_real", "A": "A_real", "X": "X_real", "T": "threat_capability",
-    "rem": "remediation_capability", "vis": "vis_real",
-    "C": "capability_supplied", "Cn": "C_IAX",
-    "conn": "conn_density_realised", "dep": "channel_per_node",
-    "cp": "directing_per_node", "cp_take": "control_plane_takeover_rate",
-    "cp_pool": "n_control_plane_pool", "tau_a": "tau_a",
-    "outcome": "trial_collapse_rate",
-}
-H1_AXES = ["I", "A", "X", "T", "rem", "vis"]
-ADD_POS = ["I", "A", "X", "T"]
-ADD_NEG = ["rem", "vis"]
-COUPLING_AXES = ["I", "A", "X", "T", "rem", "vis", "C", "conn", "dep"]
-DESCRIPTIVE_SCORES = ["ADD", "F1", "FC", "FCn", "S_A", "S_C", "S_Cn"]
+# Fixed in every architecture (Section 5)
+FIXED = dict(threat_capability=1.0, authority_rate=0.55, execution_rate=0.55,
+             control_variance=0.0, beta_conn=0.12, dependency_factor=2.0,
+             execution_drift_boost=0.0, control_plane_takeover_rate=0.08, authority_boost=2.0,
+             synchrony=0.5, drift_increment=0.0, exfil_dwell_steps=5, max_steps=50,
+             latency_steps=0, entry_certain=True,
+             phantom_cp_rate=0.0, phantom_channel_rate=0.0, phantom_dep_rate=0.0,
+             ablation=dict(structure=True, time=False, adaptation=False),
+             impact_lognormal=dict(mean=0.0, sigma=1.0))
 
-
-def _safe_div(num, den):
-    return num / np.maximum(den, 1e-9)
-
-
-FORMULAS: Dict[str, dict] = {
-    # multiplicative composites (IAE form of the Code80 set)
-    "F1": {"expr": "I*A*X*T/(rem*vis)", "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "rem", "vis"],
-           "f": lambda d: _safe_div(d.I * d.A * d.X * d.T, d.rem * d.vis)},
-    "FC": {"expr": "Cap*T/(rem*vis), Cap = supplied I^X^A", "role": "conjunction",
-           "vars": ["C", "T", "rem", "vis"],
-           "f": lambda d: _safe_div(d.C * d.T, d.rem * d.vis)},
-    "FCn": {"expr": "C_IAX*T/(rem*vis), node-level only", "role": "conjunction (descriptive)",
-            "vars": ["Cn", "T", "rem", "vis"],
-            "f": lambda d: _safe_div(d.Cn * d.T, d.rem * d.vis)},
-    "F2": {"expr": "I*A*X*T*dep/(rem*vis)", "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "dep", "rem", "vis"],
-           "f": lambda d: _safe_div(d.I * d.A * d.X * d.T * d.dep, d.rem * d.vis)},
-    "F3": {"expr": "I*A*X*T/(rem*vis*tau_a)", "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "rem", "vis", "tau_a"],
-           "f": lambda d: _safe_div(d.I * d.A * d.X * d.T,
-                                    d.rem * d.vis * np.maximum(d.tau_a, 0.01))},
-    "F4": {"expr": "I*A*X*T*conn/(rem*vis)", "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "conn", "rem", "vis"],
-           "f": lambda d: _safe_div(d.I * d.A * d.X * d.T * d.conn, d.rem * d.vis)},
-    "F5": {"expr": "I*T/(rem*vis)", "role": "multiplicative",
-           "vars": ["I", "T", "rem", "vis"],
-           "f": lambda d: _safe_div(d.I * d.T, d.rem * d.vis)},
-    "F6": {"expr": "I*A*X*T*(1+cp/cp_pool*cp_take)/(rem*vis*(1+cp/(2.5+cp)*(1-cp_take)))",
-           "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "rem", "vis", "cp", "cp_take", "cp_pool"],
-           "f": lambda d: _safe_div(
-               d.I * d.A * d.X * d.T * (1.0 + _safe_div(d.cp, d.cp_pool) * d.cp_take),
-               d.rem * d.vis * (1.0 + (d.cp / (2.5 + d.cp)) * (1.0 - d.cp_take)))},
-    "F7": {"expr": "I*A*X*T*dep*conn/(rem*vis)", "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "dep", "conn", "rem", "vis"],
-           "f": lambda d: _safe_div(d.I * d.A * d.X * d.T * d.dep * d.conn, d.rem * d.vis)},
-    "F8": {"expr": "I*A*X*T/(rem*vis*(1-0.5*tau_a))", "role": "multiplicative",
-           "vars": ["I", "A", "X", "T", "rem", "vis", "tau_a"],
-           "f": lambda d: _safe_div(d.I * d.A * d.X * d.T,
-                                    d.rem * d.vis * np.maximum(1.0 - 0.5 * d.tau_a, 0.01))},
-    # H1 constituent single axes (defensive axes negated: higher = riskier)
-    "S_I":   {"expr": "I",    "role": "single", "vars": ["I"],   "f": lambda d: d.I},
-    "S_A":   {"expr": "A",    "role": "single", "vars": ["A"],   "f": lambda d: d.A},
-    "S_X":   {"expr": "X",    "role": "single", "vars": ["X"],   "f": lambda d: d.X},
-    "S_T":   {"expr": "T",    "role": "single", "vars": ["T"],   "f": lambda d: d.T},
-    "S_rem": {"expr": "-rem", "role": "single", "vars": ["rem"], "f": lambda d: -d.rem},
-    "S_vis": {"expr": "-vis", "role": "single", "vars": ["vis"], "f": lambda d: -d.vis},
-    # structural single-variable baselines (reported, not H1 comparators)
-    "S_C":    {"expr": "Cap",   "role": "structural single", "vars": ["C"],    "f": lambda d: d.C},
-    "S_Cn":   {"expr": "C_IAX", "role": "structural single", "vars": ["Cn"],   "f": lambda d: d.Cn},
-    "S_conn": {"expr": "conn",  "role": "structural single", "vars": ["conn"], "f": lambda d: d.conn},
-    "S_dep":  {"expr": "dep",   "role": "structural single", "vars": ["dep"],  "f": lambda d: d.dep},
-}
-ADD_EXPR = "z(I)+z(A)+z(X)+z(T)-z(rem)-z(vis), z fixed on the development sample"
-
+# Per-node predictor sets (Section 7.1, 10, 13)
+GATED = ["gated_distance", "log_redundancy", "dist_x_red"]
+UNGATED = ["ungated_distance", "log_ungated_redundancy", "udist_x_ured"]
+INDUCED = ["induced_distance", "log_induced_redundancy", "idist_x_ired"]
+NODE_MEASURES = ["I_native", "X_native", "A_native", "I_sup", "X_sup", "A_sup",
+                 "complete_conn", "complete_chan", "eligible", "n_ways", "plane_member", "touchpoint",
+                 "deliv_conn", "deliv_chan", "deliv_dir",
+                 "gated_distance", "ungated_distance", "induced_distance",
+                 "redundancy", "ungated_redundancy", "induced_redundancy",
+                 "hub_member", "hub_max_fanout", "mech_reachable", "boundary_X", "boundary_A",
+                 "cut_I", "cut_X", "cut_A"]
+ARCH_MEASURES = ["source_degree", "f_IXA", "f_XA", "f_A", "f_XA_native", "f_A_native", "complete_count",
+                 "redundancy_mean", "hub_concentration", "centralisation", "chain_depth",
+                 "cut_conn", "cut_chan", "cut_conf", "cut_dir",
+                 "fanout_max_conn", "fanout_max_chan", "fanout_max_conf", "fanout_max_dir",
+                 "boundary_share", "deg_mean", "deg_max", "betw_mean", "betw_max",
+                 "reach_ungated", "n_scc", "path_mean"]
 
 # ############################################################################
 # EMBEDDED FROZEN CORE: cemt_core v0.8 (no external import)
@@ -719,6 +556,14 @@ def _load_embedded_core():
     import zlib as _z
     import base64 as _b
     report = {}
+    try:
+        import yaml  # noqa: F401  (used only by the core's file loaders)
+    except ImportError:
+        stub = types.ModuleType("yaml")
+        def _no_yaml(*a, **k):
+            raise RuntimeError("PyYAML is not installed; the core's YAML loaders are unavailable")
+        stub.safe_load = stub.safe_dump = stub.load = stub.dump = _no_yaml
+        sys.modules["yaml"] = stub
     pkg = types.ModuleType("cemt_core")
     pkg.__path__ = []
     pkg.__package__ = "cemt_core"
@@ -740,475 +585,1158 @@ def _load_embedded_core():
 
 
 # ############################################################################
-# PART 1: DRIVER
+# PART 1: DRIVER (architectures, measures, runs)
 # ############################################################################
+
+class ICFailure(RuntimeError):
+    """An implementation check failed inside a worker; generation stops with the message."""
+
 
 _CORE = None
 
 
 def _core():
-    """Load the embedded frozen cemt_core once per process."""
     global _CORE
     if _CORE is None:
         pkg, report = _load_embedded_core()
         sp = sys.modules["cemt_core.spec"]
         _CORE = SimpleNamespace(
-            generate_spec=pkg.generate_spec, build_network=pkg.build_network,
-            run_one_trial=pkg.run_one_trial, CORE_VERSION=pkg.CORE_VERSION,
-            AblationSpec=sp.AblationSpec, AdaptationSpec=sp.AdaptationSpec,
-            TimeSpec=sp.TimeSpec, RelationClass=sp.RelationClass,
-            Condition=sp.Condition, Node=sp.Node, Relation=sp.Relation,
-            Governance=sp.Governance, CLASS_SUPPLIES=sp.CLASS_SUPPLIES,
-            hash_report=report)
+            build_network=pkg.build_network, run_one_trial=pkg.run_one_trial,
+            CORE_VERSION=pkg.CORE_VERSION, sp=sp, RC=sp.RelationClass, Cond=sp.Condition,
+            RelationTable=sys.modules["cemt_core.relations"].RelationTable, hash_report=report)
     return _CORE
+
+
+def _guard_validate(sp) -> None:
+    """IC8: ScenarioSpec.validate is never called on any built spec (latent DEPENDENCY reference)."""
+    def _never(self, *a, **k):
+        raise SystemExit("IC8 failed: ScenarioSpec.validate was called; it references RelationClass.DEPENDENCY")
+    sp.ScenarioSpec.validate = _never
+
+
+def ic6_fixtures() -> dict:
+    """IC6 fixtures: two paths sharing one internal vertex give redundancy 1 after node-splitting;
+    Cut values on single-supply, alternative-supply and shared-upstream fixtures."""
+    # fixture 1: roots 0 and 1 both lead through vertex 2 to target 3
+    adj = [[2], [2], [3], []]
+    r = _disjoint_paths(adj, [0, 1], 3, 4, 5)
+    # fixture 2: roots 0 and 1 lead separately to target 3 through 2 and 4
+    adj2 = [[2], [4], [3], [], [3]]
+    r2 = _disjoint_paths(adj2, [0, 1], 3, 5, 5)
+    # cut fixtures on the frozen relation table
+    c, sp, RC, Cond = _core(), _core().sp, _core().RC, _core().Cond
+    gov = [sp.Governance("estate", True), sp.Governance("vendor", False)]
+    def mk(rels):
+        nodes = [_node(sp, "a", "estate", True, True, True), _node(sp, "b", "estate", True, True, True),
+                 _node(sp, "t", "estate", False, True, True)]
+        spec = sp.ScenarioSpec(id="fx", description="", governance=gov, nodes=nodes, relations=rels, seed=1)
+        table = c.RelationTable(spec)
+        cs = table.cut_set("t")
+        return cs.get(Cond.INTERFACE)
+    single = mk([sp.Relation("a", "t", Cond.INTERFACE, RC.CONNECTION)])
+    alt = mk([sp.Relation("a", "t", Cond.INTERFACE, RC.CONNECTION), sp.Relation("b", "t", Cond.INTERFACE, RC.CONNECTION)])
+    ok = (r == 1 and r2 == 2 and single is not None and single[0] == "a" and alt is None)
+    return dict(passed=bool(ok), shared_vertex_redundancy=r, separate_paths_redundancy=r2,
+                single_supply_cut=str(single), alternative_supply_cut=str(alt))
 
 
 def freeze_status() -> dict:
     c = _core()
+    _guard_validate(c.sp)
     ok = all(c.hash_report.values())
     bad = [k for k, v in c.hash_report.items() if not v]
-    return dict(core_version=c.CORE_VERSION,
-                freeze_digest=EMBEDDED_SET_DIGEST if ok else None, verified=ok,
-                note=("embedded core matches freeze record" if ok
-                      else "EMBEDDED CORE DIFFERS from freeze record: " + ", ".join(bad)))
+    return dict(core_version=c.CORE_VERSION, freeze_digest=EMBEDDED_SET_DIGEST if ok else None,
+                verified=ok, note=("embedded core matches freeze record" if ok else
+                                   "EMBEDDED CORE DIFFERS from freeze record: " + ", ".join(bad)))
 
 
-def _draw(rng, lo, hi, scale):
-    if scale == "lin":
-        return float(rng.uniform(lo, hi))
-    if scale == "log":
-        return float(np.exp(rng.uniform(np.log(lo), np.log(hi))))
-    if scale == "int":
-        return int(rng.integers(int(lo), int(hi) + 1))
-    return int(round(np.exp(rng.uniform(np.log(lo), np.log(hi)))))
+# ---- specification assembly -------------------------------------------------
+
+def _node(sp, nid, gov, I, X, A, impact=1.0, visible=True):
+    return sp.Node(id=nid, governance=gov, interface=bool(I), execution_pathway=bool(X),
+                   authority=bool(A), visible=visible, impact=float(impact))
 
 
-def sample_params(rng, regime: str) -> dict:
-    p = {name: _draw(rng, lo, hi, sc) for name, lo, hi, sc, _ in SAMPLED}
-    for name, lo, hi, sc, _ in OPEN_SAMPLED:
-        v = _draw(rng, lo, hi, sc)        # always drawn so the stream is aligned
-        p[name] = v if regime == "open" else FIXED["closed_phantom_rates"]
-    return p
+def _rel(c, s, r, cond, rc, group=None):
+    return c.sp.Relation(s, r, cond, rc, group=group) if group else c.sp.Relation(s, r, cond, rc)
 
 
-def oat_levels(name: str, n: int) -> List[float]:
-    lo, hi, scale = next((s[1], s[2], s[3]) for s in SAMPLED if s[0] == name)
-    v = (np.exp(np.linspace(np.log(lo), np.log(hi), n)) if scale in ("log", "logint")
-         else np.linspace(lo, hi, n))
-    if scale in ("int", "logint"):
-        return sorted(set(int(round(x)) for x in v))
-    return [float(x) for x in v]
+def make_spec(arch_id: str, nodes, rels, seed: int, deterministic: bool = False):
+    c, sp = _core(), _core().sp
+    ab = FIXED["ablation"]
+    return sp.ScenarioSpec(
+        id=arch_id, description=f"P4A v{VERSION}",
+        governance=[sp.Governance("estate", True), sp.Governance("vendor", False)],
+        nodes=nodes, relations=rels, entry_certain=FIXED["entry_certain"], seed=seed,
+        deterministic=deterministic,
+        rates=sp.RateSpec(threat_capability=FIXED["threat_capability"],
+                          authority_rate=FIXED["authority_rate"], execution_rate=FIXED["execution_rate"],
+                          control_variance=FIXED["control_variance"], beta_conn=FIXED["beta_conn"],
+                          synchrony=FIXED["synchrony"], dependency_factor=FIXED["dependency_factor"],
+                          execution_drift_boost=FIXED["execution_drift_boost"],
+                          control_plane_takeover_rate=FIXED["control_plane_takeover_rate"],
+                          authority_boost=FIXED["authority_boost"],
+                          phantom_cp_rate=FIXED["phantom_cp_rate"],
+                          phantom_channel_rate=FIXED["phantom_channel_rate"],
+                          phantom_dep_rate=FIXED["phantom_dep_rate"]),
+        time=sp.TimeSpec(latency_steps=FIXED["latency_steps"], drift_increment=FIXED["drift_increment"],
+                         exfil_dwell_steps=FIXED["exfil_dwell_steps"], max_steps=FIXED["max_steps"]),
+        adaptation=sp.AdaptationSpec(remediation_capability=0.0, synchrony=FIXED["synchrony"],
+                                     threshold=0.0, tau_a=0.3, simple_policy=True),
+        ablation=sp.AblationSpec(structure=ab["structure"], time=ab["time"], adaptation=ab["adaptation"]))
 
 
-def apply_conditions(spec, params: dict, seed: int) -> None:
-    """Driver scenario conditions (decision 1). Mechanics untouched.
+def _impacts(rng, n):
+    p = FIXED["impact_lognormal"]
+    return rng.lognormal(p["mean"], p["sigma"], n)
 
-    Per estate node, I, X and A presence are drawn from an equicorrelated
-    Gaussian copula: z_k = sqrt(rho) c + sqrt(1 - rho) e_k, condition present
-    iff z_k < Phi^-1(rate_k). Marginal rates are preserved; rho sets how far
-    the three conditions co-locate on the same nodes. Conferring control
-    planes are then added (Paper 1B Authority row, conferring form).
-    """
-    c = _core()
-    rng = np.random.default_rng(seed * 7 + 13)
-    est = [n for n in spec.nodes if n.governance == "estate"]
-    rho = float(params["colocation"])
-    common = rng.standard_normal(len(est))
-    rates = (params["interface_rate"], params["x_presence_rate"], params["a_presence_rate"])
-    pres = []
-    for r in rates:
-        z = np.sqrt(rho) * common + np.sqrt(1.0 - rho) * rng.standard_normal(len(est))
-        pres.append(z < norm.ppf(r))
-    for k, n in enumerate(est):
-        n.interface = bool(pres[0][k])
-        n.execution_pathway = bool(pres[1][k])
-        n.authority = bool(pres[2][k])
-        zs = [z for z in n.zones if z != 0]
-        n.zones = ([0] + zs) if n.interface else zs
-    ids = [n.id for n in est]
-    for k in range(int(params["n_conferring_planes"])):
-        if rng.random() < params["frac_external_issuers"]:
-            issuer = f"idp{k}"
-            spec.nodes.append(c.Node(id=issuer, governance="vendor", interface=True,
-                                     visible=False, state_object="credentials"))
+
+def _exact_subset(rng, n, f, forced=()):
+    """Exactly round(f*n) nodes hold A; forced indices always do."""
+    k = int(round(f * n))
+    A = np.zeros(n, dtype=bool)
+    forced = list(forced)
+    A[forced] = True
+    others = [i for i in range(n) if i not in forced]
+    need = max(0, k - len(forced))
+    if need and others:
+        A[rng.choice(others, min(need, len(others)), replace=False)] = True
+    return A
+
+
+def _source(sp, k=0):
+    return _node(sp, f"src{k}", "vendor", True, True, True, impact=0.0, visible=False)
+
+
+# ---- canonical shapes (Section 6.1) -----------------------------------------
+
+SCALE_TABLE = {120: {10: 20, 20: 40, 40: 80, 59: 119, 1: 2, 5: 10}}   # Section 6.1 held-out dimensions
+
+
+def scale60(N: int, v: int) -> int:
+    """Canonical dimension v at N = 60 mapped to N: the stated table for N = 120, else proportional."""
+    if N == 60:
+        return int(v)
+    if N in SCALE_TABLE and v in SCALE_TABLE[N]:
+        return SCALE_TABLE[N][v]
+    return max(1, int(round(v * (N - 1) / 59.0)))
+
+
+def mesh_densities(N: int, f: float) -> List[float]:
+    """Section 6.1: d_j = min(0.95, d*_{N,f} 2^(-2+5j/11)), with the nominal-gate d*."""
+    pi = FIXED["beta_conn"] * FIXED["execution_rate"] * FIXED["authority_rate"]
+    T_H = 1 - (1 - pi) ** FIXED["max_steps"]
+    d_star = 1.0 / ((N - 1) * f * T_H)
+    return [min(DESIGN["mesh_density_cap"], d_star * 2 ** e) for e in DESIGN["mesh_grid_exponents"]]
+
+
+def build_canonical(task: dict):
+    """Returns (spec, node_meta, arch_meta). Exactly round(f*N) estate nodes hold A (IC4);
+    nothing is forced complete. The source is src0, outside the boundary."""
+    c, sp, RC, Cond = _core(), _core().sp, _core().RC, _core().Cond
+    rng = np.random.default_rng(task["seed"])
+    N, f, shape = task["N"], task["f"], task["shape"]
+    ids = [f"n{k}" for k in range(N)]
+    I = rng.random(N) < 0.5
+    X = np.ones(N, dtype=bool)
+    imp = _impacts(rng, N)
+    nodes, rels, meta = [], [], {}
+    d = task.get("d", 0.0)
+    n = task.get("n", 0)
+    variant = task.get("variant", "intact")
+    removed = set()
+    if shape in ("star_cp", "star_conn"):
+        # Section 6.1: the entry leaf and the hub or controller are always among the A holders
+        hub = 0
+        leaves = list(rng.choice(np.arange(1, N), n, replace=False))
+        entry_leaf = int(rng.choice(leaves))
+        A = _exact_subset(rng, N, f, [hub, entry_leaf])
+    else:
+        A = _exact_subset(rng, N, f, [])
+    if shape == "mesh":
+        V = N + 1                      # the source is a vertex of one G(V, d) mesh: independent edge draws
+        iu, ju = np.triu_indices(V, 1)
+        keep = rng.random(len(iu)) < d
+        pairs = sorted(zip(iu[keep].tolist(), ju[keep].tolist()))
+        for i, j in pairs:
+            a_, b_ = ("src0" if i == N else ids[i]), ("src0" if j == N else ids[j])
+            rels.append(_rel(c, a_, b_, Cond.INTERFACE, RC.CONNECTION))
+            if i == N or j == N:
+                meta[b_ if i == N else a_] = "touchpoint"
+    elif shape in ("star_cp", "star_conn", "star_hubsource"):
+        if shape == "star_hubsource":
+            hub = 0
+            leaves = list(rng.choice(np.arange(1, N), n, replace=False))
+            entry_leaf = int(rng.choice(leaves))
+        I[hub] = False
+        if variant == "hub_removed":
+            removed.add(hub)
+        elif variant.startswith("leaves_removed_"):
+            k = int(variant.split("_")[-1])
+            cand = [l for l in leaves if l != entry_leaf]
+            removed.update(int(x) for x in rng.choice(cand, min(k, len(cand)), replace=False))
+        keep_leaves = [l for l in leaves if l not in removed]
+        if shape == "star_hubsource":
+            for l in keep_leaves:
+                rels.append(_rel(c, "src0", ids[l], Cond.INTERFACE, RC.CONTROL_PLANE_DIRECTING, group="plane0"))
+            removed.add(hub)
         else:
-            issuer = ids[int(rng.integers(len(ids)))]
-        m = max(1, int(round(params["conferring_span"] * len(ids))))
-        for mem in rng.choice(ids, min(m, len(ids)), replace=False):
-            if mem != issuer:
-                spec.relations.append(c.Relation(
-                    issuer, str(mem), c.Condition.AUTHORITY,
-                    c.RelationClass.CONTROL_PLANE_CONFERRING,
-                    conferral=False, group=f"conf{k}"))
+            if hub not in removed:
+                for l in keep_leaves:
+                    if shape == "star_cp":
+                        rels.append(_rel(c, ids[hub], ids[l], Cond.INTERFACE, RC.CONTROL_PLANE_DIRECTING, group="plane0"))
+                    else:
+                        rels.append(_rel(c, ids[hub], ids[l], Cond.INTERFACE, RC.CONNECTION))
+            rels.append(_rel(c, "src0", ids[entry_leaf], Cond.INTERFACE, RC.CONNECTION))
+        meta[ids[hub]] = "hub"
+        for l in leaves:
+            meta[ids[l]] = "entry_leaf" if l == entry_leaf else "leaf"
+    elif shape in ("chain_chan", "chain_conn"):
+        depth = task.get("depth", DESIGN["chain_depth"] if N == 60 else (40 if N == 120 else scale60(N, DESIGN["chain_depth"])))
+        cls = RC.CHANNEL if shape == "chain_chan" else RC.CONNECTION
+        cond = Cond.EXECUTION_PATHWAY if shape == "chain_chan" else Cond.INTERFACE
+        if task.get("sixth") is not None:
+            # Docker chain pair: the base holds A at the sixth node, the negative control does not;
+            # the total A count is preserved by swapping with a node outside the chain
+            want = bool(task["sixth"])
+            if A[5] != want:
+                outside = [k for k in range(depth, N) if A[k] != want]
+                if outside:
+                    A[int(rng.choice(outside))] = not want
+                A[5] = want
+        rels.append(_rel(c, "src0", ids[0], cond, cls))
+        for k in range(depth - 1):
+            rels.append(_rel(c, ids[k], ids[k + 1], cond, cls))
+        for k in range(depth):
+            meta[ids[k]] = f"depth{k + 1}"
+        I[:depth] = False
+    elif shape in ("matched_mesh", "matched_star", "matched_chain"):
+        R = N - 1
+        if shape == "matched_mesh":
+            pairs = set()
+            while len(pairs) < R:
+                i, j = rng.integers(0, N, 2)
+                if i != j:
+                    pairs.add((min(i, j), max(i, j)))
+            edges = sorted(pairs)
+        elif shape == "matched_star":
+            edges = [(0, j) for j in range(1, N)]
+        else:
+            edges = [(k, k + 1) for k in range(N - 1)]
+        for i, j in edges:
+            rels.append(_rel(c, ids[i], ids[j], Cond.INTERFACE, RC.CONNECTION))
+        rels.append(_rel(c, "src0", ids[0], Cond.INTERFACE, RC.CONNECTION))
+        meta[ids[0]] = "touchpoint"
+    else:
+        raise ValueError(shape)
+    for k in range(N):
+        if k in removed:
+            continue
+        nodes.append(_node(sp, ids[k], "estate", I[k], X[k], A[k], imp[k]))
+    nodes.append(_source(sp))
+    spec = make_spec(task["arch_id"], nodes, rels, task["seed"])
+    arch_meta = dict(f_target=f, d=d, n=n, variant=variant, sources="src0", source_types="canonical",
+                     N_target=N, n_A_assigned=int(A.sum()))
+    return spec, meta, arch_meta
 
 
-def build_spec(params: dict, scenario_seed: int):
-    c = _core()
-    target = {s[0]: s[4] for s in SAMPLED + OPEN_SAMPLED}
-    gen = {k: v for k, v in params.items() if target.get(k) in ("gen", "rate")}
-    gen.update(node_count=FIXED["node_count"], n_zones=FIXED["n_zones"],
-               phantom_dep_rate=0.0)
-    spec = c.generate_spec(gen, seed=scenario_seed, scenario_id=f"p4a_{scenario_seed}")
-    apply_conditions(spec, params, scenario_seed)
-    sp = sys.modules["cemt_core.spec"]
-    actions = [sp.DefenderActionKind.REMEDIATE]
-    if int(params["revoke_enabled"]):
-        actions.append(sp.DefenderActionKind.REVOKE_TRUST)
-    spec.adaptation = c.AdaptationSpec(
-        remediation_capability=float(params["remediation_capability"]),
-        synchrony=FIXED["synchrony"], threshold=float(params["policy_threshold"]),
-        tau_a=FIXED["tau_a"], simple_policy=FIXED["simple_policy"],
-        actions_allowed=actions)
-    spec.entry_certain = FIXED["entry_certain"]
-    spec.time = c.TimeSpec(latency_steps=int(params["latency_steps"]),
-                           drift_increment=float(params["drift_increment"]),
-                           exfil_dwell_steps=FIXED["exfil_dwell_steps"],
-                           max_steps=FIXED["max_steps"])
-    spec.ablation = c.AblationSpec(structure=True, time=True, adaptation=True)
-    return spec
+# ---- mixed architectures (Section 6.2) -------------------------------------
+
+def draw_factors(n: int, ranges: dict, seed: int) -> List[dict]:
+    names = list(ranges)
+    u = qmc.LatinHypercube(d=len(names), seed=seed).random(n)
+    out = []
+    for row in u:
+        f = {}
+        for name, v in zip(names, row):
+            lo, hi, kind = ranges[name]
+            f[name] = float(lo + v * (hi - lo)) if kind == "lin" else int(lo + math.floor(v * (hi - lo + 1)))
+        out.append(f)
+    return out
 
 
-def measure_structure(spec) -> dict:
-    """Realised measurements from the scenario specification (decision D3:
-    derived from the relation table, never parameters). Definitions follow
-    cemt_core.relations: one supply row per condition a relation supplies,
-    connection rows symmetric, node-level instances as self-supply."""
-    c = _core()
-    RC, CS = c.RelationClass, c.CLASS_SUPPLIES
-    gov_ctl = {g.id: g.defender_controlled for g in spec.governance}
-    gov = {n.id: n.governance for n in spec.nodes}
-    est = [n for n in spec.nodes if gov_ctl[n.governance]]
-    est_ids = {n.id for n in est}
-    n_est = max(len(est), 1)
-
-    supply = {}                       # (receiver, cond) -> {supplier: class}
-    fan = {}                          # (supplier, class) -> set(receivers)
-    fan_sos = {}
-    n_rows = n_sos = 0
-
-    def _row(s, r, cond, rc):
-        nonlocal n_rows, n_sos
-        supply.setdefault((r, cond), {}).setdefault(s, rc)
-        if s != r:
-            n_rows += 1
-            fan.setdefault((s, rc), set()).add(r)
-            if gov[s] != gov[r]:
-                n_sos += 1
-                fan_sos.setdefault(s, set()).add(r)
-
-    counts = {rc: 0 for rc in RC}
+def build_mixed(task: dict):
+    c, sp, RC, Cond = _core(), _core().sp, _core().RC, _core().Cond
+    f = task["factors"]
+    rng = np.random.default_rng(task["seed"])
+    N = int(f["n_nodes"])
+    ids = [f"n{k}" for k in range(N)]
+    rho = f["colocation"]
+    common = rng.standard_normal(N)
+    pres = {}
+    for cond, rate in (("I", f["p_I"]), ("X", f["p_X"]), ("A", f["p_A"])):
+        z = np.sqrt(rho) * common + np.sqrt(1 - rho) * rng.standard_normal(N)
+        pres[cond] = z < stats.norm.ppf(rate)
+    imp = _impacts(rng, N)
+    nodes = [_node(sp, ids[k], "estate", pres["I"][k], pres["X"][k], pres["A"][k], imp[k]) for k in range(N)]
+    rels, meta = [], {}
     conn_pairs = set()
-    for rel in spec.relations:
-        counts[rel.relation_class] += 1
-        for cond in CS[rel.relation_class]:
-            _row(rel.supplier, rel.receiver, cond, rel.relation_class)
-            if rel.relation_class == RC.CONNECTION:
-                _row(rel.receiver, rel.supplier, cond, rel.relation_class)
-        if rel.relation_class == RC.CONNECTION and rel.supplier in est_ids and rel.receiver in est_ids:
-            conn_pairs.add(tuple(sorted((rel.supplier, rel.receiver))))
-    for n in spec.nodes:
-        for cond, present in (("I", n.interface), ("X", n.execution_pathway), ("A", n.authority)):
-            if present:
-                supply.setdefault((n.id, cond), {}).setdefault(n.id, RC.CONNECTION)
-
-    cut_cond = {"I": 0, "X": 0, "A": 0}
-    cut_cls = {rc: 0 for rc in RC}
-    cut_sos = 0
-    cut_by_supplier = {}
-    cap = 0
-    for n in est:
-        ok = True
-        for cond in ("I", "X", "A"):
-            s = supply.get((n.id, cond), {})
-            if not s:
-                ok = False
-            if len(s) == 1:
-                sup, rc = next(iter(s.items()))
-                if sup != n.id:
-                    cut_cond[cond] += 1
-                    cut_cls[rc] += 1
-                    cut_by_supplier[sup] = cut_by_supplier.get(sup, 0) + 1
-                    if gov[sup] != gov[n.id]:
-                        cut_sos += 1
-        cap += ok
-
-    def _fan(rc):
-        v = [len(r) for (s, k), r in fan.items() if k == rc]
-        return v or [0]
-
-    tot = {}
-    for (s, _), r in fan.items():
-        tot.setdefault(s, set()).update(r)
-    return dict(
-        n_estate_nodes=len(est), n_external_nodes=len(spec.nodes) - len(est),
-        I_real=float(np.mean([n.interface for n in est])),
-        X_real=float(np.mean([n.execution_pathway for n in est])),
-        A_real=float(np.mean([n.authority for n in est])),
-        vis_real=float(np.mean([n.visible for n in est])),
-        C_IAX=float(np.mean([n.interface and n.execution_pathway and n.authority for n in est])),
-        capability_supplied=cap / n_est,
-        conn_density_realised=len(conn_pairs) / max(n_est * (n_est - 1) / 2, 1),
-        channel_per_node=counts[RC.CHANNEL] / n_est,
-        directing_per_node=counts[RC.CONTROL_PLANE_DIRECTING] / n_est,
-        conferring_per_node=counts[RC.CONTROL_PLANE_CONFERRING] / n_est,
-        fanout_max_total=max((len(r) for r in tot.values()), default=0),
-        fanout_mean_directing=float(np.mean(_fan(RC.CONTROL_PLANE_DIRECTING))),
-        fanout_max_directing=max(_fan(RC.CONTROL_PLANE_DIRECTING)),
-        fanout_max_conferring=max(_fan(RC.CONTROL_PLANE_CONFERRING)),
-        fanout_max_sos=max((len(r) for r in fan_sos.values()), default=0),
-        cut_I_per_node=cut_cond["I"] / n_est, cut_X_per_node=cut_cond["X"] / n_est,
-        cut_A_per_node=cut_cond["A"] / n_est,
-        cut_connection_per_node=cut_cls[RC.CONNECTION] / n_est,
-        cut_channel_per_node=cut_cls[RC.CHANNEL] / n_est,
-        cut_directing_per_node=cut_cls[RC.CONTROL_PLANE_DIRECTING] / n_est,
-        cut_conferring_per_node=cut_cls[RC.CONTROL_PLANE_CONFERRING] / n_est,
-        cut_sos_per_node=cut_sos / n_est,
-        cut_max_single_supplier=max(cut_by_supplier.values(), default=0),
-        sos_row_fraction=n_sos / max(n_rows, 1),
-    )
+    m = int(round(f["conn_density"] * N * (N - 1) / 2))
+    while len(conn_pairs) < m:
+        i, j = rng.integers(0, N, 2)
+        if i != j:
+            conn_pairs.add((min(i, j), max(i, j)))
+    for i, j in sorted(conn_pairs):
+        rels.append(_rel(c, ids[i], ids[j], Cond.INTERFACE, RC.CONNECTION))
+    chan = set()
+    m = int(round(f["chan_density"] * N * (N - 1)))
+    while len(chan) < m:
+        i, j = rng.integers(0, N, 2)
+        if i != j:
+            chan.add((int(i), int(j)))
+    for i, j in conn_pairs:
+        if rng.random() < f["bundle_chan"]:
+            chan.add((i, j) if rng.random() < 0.5 else (j, i))
+    for i, j in sorted(chan):
+        rels.append(_rel(c, ids[i], ids[j], Cond.EXECUTION_PATHWAY, RC.CHANNEL))
+    for cls, ck, sk in (("conf", "conf_count", "conf_membership"), ("dir", "dir_count", "dir_fanout")):
+        for k in range(int(f[ck])):
+            ext = rng.random() < f["share_external"]
+            src = f"{cls}{k}"
+            nodes.append(_node(sp, src, "vendor" if ext else "estate", True, True, True, 0.0, visible=not ext))
+            mem = rng.choice(N, max(1, int(round(f[sk] * N))), replace=False)
+            for j in mem:
+                if cls == "conf":
+                    rels.append(_rel(c, src, ids[j], Cond.AUTHORITY, RC.CONTROL_PLANE_CONFERRING, group=src))
+                else:
+                    rels.append(_rel(c, src, ids[j], Cond.INTERFACE, RC.CONTROL_PLANE_DIRECTING, group=src))
+                    if rng.random() < f["bundle_dir"]:
+                        rels.append(_rel(c, src, ids[j], Cond.INTERFACE, RC.CONNECTION))
+    # sources (Section 6.3): 1 + (a mod 3) sources; the sample seed fixes one base permutation
+    # of the three types, rotated by a mod 3, first n_src taken (without replacement)
+    a_idx = int(task["index"])
+    n_src = 1 + a_idx % 3
+    base = list(np.random.default_rng(task["meta"]["sample_seed"] * 31 + 5).permutation(SOURCE_TYPES))
+    rot = a_idx % 3
+    types = (base[rot:] + base[:rot])[:n_src]
+    src_ids = []
+    for k, typ in enumerate(types):
+        sid = f"src{k}"
+        src_ids.append(sid)
+        nodes.append(_source(sp, k))
+        if typ == "relay":
+            tgt = rng.choice(N, max(1, int(round(f["relay_share"] * N))), replace=False)
+            for j in tgt:
+                rels.append(_rel(c, sid, ids[j], Cond.INTERFACE, RC.CONNECTION))
+        elif typ == "update":
+            tgt = rng.choice(N, max(1, int(round(f["dir_fanout"] * N))), replace=False)
+            for j in tgt:
+                rels.append(_rel(c, sid, ids[j], Cond.INTERFACE, RC.CONTROL_PLANE_DIRECTING, group=f"{sid}plane"))
+        else:
+            tgt = rng.choice(N, min(N, int(f["registry_targets"])), replace=False)
+            for j in tgt:
+                rels.append(_rel(c, sid, ids[j], Cond.EXECUTION_PATHWAY, RC.CHANNEL))
+        meta[sid] = typ
+    spec = make_spec(task["arch_id"], nodes, rels, task["seed"])
+    return spec, meta, dict(sources=";".join(src_ids), source_types=";".join(types))
 
 
-def evaluate_scenario(task: dict) -> dict:
-    """One scenario: build once, measure, run n_trials. Runs in a worker."""
+# ---- static measures (Section 7) --------------------------------------------
+
+def _bfs_multi(adj, roots, n):
+    dist = np.full(n, -1)
+    q = []
+    for r in roots:
+        if dist[r] < 0:
+            dist[r] = 0
+            q.append(r)
+    for u in q:
+        for v in adj[u]:
+            if dist[v] < 0:
+                dist[v] = dist[u] + 1
+                q.append(v)
+    return dist
+
+
+def _disjoint_paths(adj_out, roots, target, n, cap):
+    """Vertex-disjoint paths from any root to target, capped (Edmonds-Karp on
+    the node-split graph, unit capacities)."""
+    # node split: in = 2v, out = 2v+1 ; super source S = 2n, sink = target in
+    S = 2 * n
+    caps = {}
+    def add(u, v):
+        caps.setdefault(u, {})[v] = caps.get(u, {}).get(v, 0) + 1
+        caps.setdefault(v, {}).setdefault(u, 0)
+    for v in range(n):
+        add(2 * v, 2 * v + 1)
+    for u in range(n):
+        for v in adj_out[u]:
+            add(2 * u + 1, 2 * v)
+    for r in roots:
+        add(S, 2 * r)
+    sink = 2 * target
+    flow = 0
+    while flow < cap:
+        parent = {S: None}
+        q = [S]
+        found = False
+        for u in q:
+            for v, cp in caps.get(u, {}).items():
+                if cp > 0 and v not in parent:
+                    parent[v] = u
+                    if v == sink:
+                        found = True
+                        break
+                    q.append(v)
+            if found:
+                break
+        if not found:
+            break
+        v = sink
+        while parent[v] is not None:
+            u = parent[v]
+            caps[u][v] -= 1
+            caps[v][u] += 1
+            v = u
+        flow += 1
+    return flow
+
+
+def _dominators(adj, roots, n):
+    """Dominator sets from a super-source over the graph (Cooper, Harvey and Kennedy iteration).
+    Returns, for each vertex, the set of vertices on every path from the roots to it (excluding
+    itself), or None if unreachable."""
+    S = n
+    adj2 = [list(a) for a in adj] + [list(roots)]
+    order, seen = [], [False] * (n + 1)
+    stack = [(S, 0)]
+    seen[S] = True
+    while stack:
+        v, i = stack[-1]
+        if i < len(adj2[v]):
+            stack[-1] = (v, i + 1)
+            w = adj2[v][i]
+            if not seen[w]:
+                seen[w] = True
+                stack.append((w, 0))
+        else:
+            stack.pop()
+            order.append(v)
+    rpo = order[::-1]
+    pos = {v: k for k, v in enumerate(rpo)}
+    preds = [[] for _ in range(n + 1)]
+    for u in range(n + 1):
+        for v in adj2[u]:
+            if seen[v]:
+                preds[v].append(u)
+    idom = [-1] * (n + 1)
+    idom[S] = S
+    def intersect(a, b):
+        while a != b:
+            while pos[a] > pos[b]:
+                a = idom[a]
+            while pos[b] > pos[a]:
+                b = idom[b]
+        return a
+    changed = True
+    while changed:
+        changed = False
+        for v in rpo:
+            if v == S:
+                continue
+            new = None
+            for p in preds[v]:
+                if idom[p] != -1:
+                    new = p if new is None else intersect(p, new)
+            if new is not None and idom[v] != new:
+                idom[v] = new
+                changed = True
+    out = [None] * n
+    for v in range(n):
+        if not seen[v] or idom[v] == -1:
+            continue
+        d, cur = set(), idom[v]
+        while cur != S:
+            d.add(cur)
+            cur = idom[cur]
+        out[v] = d
+    return out
+
+
+def _betweenness_directed(adj, n):
+    C = np.zeros(n)
+    for s in range(n):
+        S, P, sigma, dist = [], [[] for _ in range(n)], np.zeros(n), np.full(n, -1)
+        sigma[s], dist[s] = 1, 0
+        q = [s]
+        for v in q:
+            S.append(v)
+            for w in adj[v]:
+                if dist[w] < 0:
+                    dist[w] = dist[v] + 1
+                    q.append(w)
+                if dist[w] == dist[v] + 1:
+                    sigma[w] += sigma[v]
+                    P[w].append(v)
+        delta = np.zeros(n)
+        for w in reversed(S):
+            for v in P[w]:
+                delta[v] += sigma[v] / sigma[w] * (1 + delta[w])
+            if w != s:
+                C[w] += delta[w]
+    return C
+
+
+def _scc_count(adj, n):
+    index, low, onst, st, idx, count = [-1] * n, [0] * n, [False] * n, [], 0, 0
+    for root in range(n):
+        if index[root] >= 0:
+            continue
+        work = [(root, 0)]
+        index[root] = low[root] = idx; idx += 1
+        st.append(root); onst[root] = True
+        while work:
+            v, i = work[-1]
+            if i < len(adj[v]):
+                work[-1] = (v, i + 1)
+                w = adj[v][i]
+                if index[w] < 0:
+                    index[w] = low[w] = idx; idx += 1
+                    st.append(w); onst[w] = True
+                    work.append((w, 0))
+                elif onst[w]:
+                    low[v] = min(low[v], index[w])
+            else:
+                work.pop()
+                if work:
+                    low[work[-1][0]] = min(low[work[-1][0]], low[v])
+                if low[v] == index[v]:
+                    count += 1
+                    while True:
+                        w = st.pop(); onst[w] = False
+                        if w == v:
+                            break
+    return count
+
+
+def measure(spec, sources: List[str]) -> Tuple[Dict[str, dict], Dict[str, Dict[str, dict]], dict]:
+    """Per-node static measures, per-source per-node measures (source-specific
+    distance from the first internal touchpoints, redundancy, reachable hub
+    membership) and per-architecture measures, all from the frozen RelationTable."""
     c = _core()
-    seed = task["scenario_seed"]
-    spec = build_spec(task["params"], seed)
-    meas = measure_structure(spec)
-    net = c.build_network(spec, np.random.default_rng(seed))
-    col, xmax, ext, steps, entry = [], [], [], [], []
-    for t in range(task["n_trials"]):
-        r = c.run_one_trial(net, np.random.default_rng(seed * 100_003 + t))
-        e = any(v == "entry" for _, _, v in r["reached"])
-        entry.append(e)
-        col.append(r["collapsed"])
-        xmax.append(r["x_true_max"])
-        ext.append(r["ever_reached_fraction"])
-        steps.append(r["n_steps"])
-    row = dict(task["meta"])
-    row.update(task["params"])
-    row.update(meas)
-    row.update(tau_a=FIXED["tau_a"], node_count=FIXED["node_count"],
-               n_trials=task["n_trials"], n_collapsed=int(np.sum(col)),
-               trial_collapse_rate=float(np.mean(col)),
-               n_entry_compromised=int(np.sum(entry)),
-               entry_compromise_rate=float(np.mean(entry)),
-               conditional_collapse_rate=(float(np.sum(np.array(col) & np.array(entry)) / np.sum(entry))
-                                          if np.sum(entry) >= FIXED["conditional_min_entries"] else float("nan")),
-               mean_x_true_max=float(np.mean(xmax)),
-               mean_ever_reached=float(np.mean(ext)),
-               mean_steps=float(np.mean(steps)), core_version=c.CORE_VERSION)
-    return row
+    RC, Cond = c.RC, c.Cond
+    table = c.RelationTable(spec)
+    gov_ctl = {g.id: g.defender_controlled for g in spec.governance}
+    ids = [n.id for n in spec.nodes]
+    idx = {nid: k for k, nid in enumerate(ids)}
+    n_all = len(ids)
+    ext = np.array([not gov_ctl[n.governance] for n in spec.nodes])
+    est = [k for k in range(n_all) if not ext[k]]
+    N = max(len(est), 1)
+    nat = {n.id: (n.interface, n.execution_pathway, n.authority) for n in spec.nodes}
+    sup: Dict[str, Dict] = {}
+    fan: Dict[Tuple[str, str], set] = {}
+    n_rows = ext_rows = 0
+    for r in table.rows:
+        sup.setdefault(r.receiver, {}).setdefault(r.condition, {}).setdefault(r.supplier, r.relation_class)
+        if r.supplier != r.receiver:
+            n_rows += 1
+            ext_rows += ext[idx[r.supplier]]
+            fan.setdefault((r.supplier, r.relation_class.value), set()).add(r.receiver)
+    def S(nid, cnd):
+        return sup.get(nid, {}).get(cnd, {})
+    CI, CX, CA = Cond.INTERFACE, Cond.EXECUTION_PATHWAY, Cond.AUTHORITY
+    supI = {nid: len(S(nid, CI)) > 0 for nid in ids}
+    supX = {nid: len(S(nid, CX)) > 0 for nid in ids}
+    supA = {nid: len(S(nid, CA)) > 0 for nid in ids}
+    adj_g = [[] for _ in ids]
+    adj_u = [[] for _ in ids]
+    deliv = {nid: {"conn": 0, "chan": 0, "dir": 0} for nid in ids}
+    planes: Dict[str, Tuple[str, List[str]]] = {}
+    in_class: Dict[str, set] = {nid: set() for nid in ids}
+    for r in table.rows:
+        if r.supplier == r.receiver:
+            continue
+        u, v = idx[r.supplier], idx[r.receiver]
+        if r.relation_class == RC.CONNECTION:
+            ok = supX[r.receiver] and supA[r.receiver]; deliv[r.receiver]["conn"] += 1; in_class[r.receiver].add("conn")
+        elif r.relation_class == RC.CHANNEL:
+            ok = supA[r.receiver]; deliv[r.receiver]["chan"] += 1; in_class[r.receiver].add("chan")
+        elif r.relation_class == RC.CONTROL_PLANE_DIRECTING:
+            ok = supX[r.receiver] and supA[r.receiver]; deliv[r.receiver]["dir"] += 1; in_class[r.receiver].add("dir")
+            g = getattr(r, "group", None) or r.supplier
+            planes.setdefault(g, (r.supplier, []))[1].append(r.receiver)
+        else:
+            continue
+        adj_u[u].append(v)
+        if ok:
+            adj_g[u].append(v)
+    # membership of a directing plane is one hop from its controller only (Section 7.1); member
+    # takeover is a Layer 3 rate and is not represented as reach in the measures. For the IC2
+    # ceiling the eligible union uses the mechanism-complete reach, which includes takeover.
+    adj_m = [list(a_) for a_ in adj_u]
+    for g, (ctl, mem) in planes.items():
+        for a_ in mem:
+            for b_ in mem:
+                if a_ != b_:
+                    adj_m[idx[a_]].append(idx[b_])
+    adj_m = [sorted(set(a_)) for a_ in adj_m]
+    adj_g = [sorted(set(a_)) for a_ in adj_g]
+    adj_u = [sorted(set(a_)) for a_ in adj_u]
+    cap = DESIGN["redundancy_cap"]
+    est_ids = [ids[k] for k in est]
+    eligible = {nid: int((("conn" in in_class[nid] or "dir" in in_class[nid]) and supX[nid] and supA[nid])
+                         or ("chan" in in_class[nid] and supA[nid])) for nid in est_ids}
+    node_static = {}
+    for nid in est_ids:
+        I0, X0, A0 = nat[nid]
+        ways = max(len(S(nid, CI)), 1) * max(len(S(nid, CX)), 1) * max(len(S(nid, CA)), 1)
+        node_static[nid] = dict(
+            I_native=int(I0), X_native=int(X0), A_native=int(A0),
+            I_sup=int(supI[nid] and not I0), X_sup=int(supX[nid] and not X0), A_sup=int(supA[nid] and not A0),
+            complete_conn=int(supX[nid] and supA[nid]), complete_chan=int(supA[nid]), eligible=eligible[nid],
+            n_ways=int(ways if (supI[nid] and supX[nid] and supA[nid]) else 0),
+            deliv_conn=deliv[nid]["conn"], deliv_chan=deliv[nid]["chan"], deliv_dir=deliv[nid]["dir"],
+            plane_member=int(sum(nid in m_ for _, m_ in planes.values())),
+            boundary_X=int(any(ext[idx[s]] for s in S(nid, CX) if s != nid)),
+            boundary_A=int(any(ext[idx[s]] for s in S(nid, CA) if s != nid)),
+            cut_I=int(len(S(nid, CI)) == 1 and nid not in S(nid, CI)),
+            cut_X=int(len(S(nid, CX)) == 1 and nid not in S(nid, CX)),
+            cut_A=int(len(S(nid, CA)) == 1 and nid not in S(nid, CA)),
+            x_prob=float("nan"), a_prob=float("nan"), impact=float(spec.node(nid).impact))
+    per_source: Dict[str, Dict[str, dict]] = {}
+    reach_ungated = []
+    est_arr = np.array(est)
+    for s in sources:
+        si = idx[s]
+        tp_u = [v for v in adj_u[si] if not ext[v]]
+        tp_g = [v for v in adj_g[si] if not ext[v]]
+        dg = _bfs_multi(adj_g, tp_g, n_all) if tp_g else np.full(n_all, -1)
+        du = _bfs_multi(adj_u, tp_u, n_all) if tp_u else np.full(n_all, -1)
+        tp_m = [v for v in adj_m[si] if not ext[v]]
+        dm = _bfs_multi(adj_m, tp_m, n_all) if tp_m else np.full(n_all, -1)
+        reach_planes = {g for g, (ctl, mem) in planes.items() if ctl == s or dg[idx[ctl]] >= 0}
+        doms = _dominators(adj_g, tp_g, n_all) if tp_g else [None] * n_all
+        def cut_for(nid, cnd):
+            """Paper 1B eq. (10): a supplying node that lies on every available supply of the
+            condition. Direct single supplier, or a common dominator of every delivering supplier."""
+            if nat[nid][{CI: 0, CX: 1, CA: 2}[cnd]]:
+                return ""
+            sups = {sid: rc for sid, rc in S(nid, cnd).items() if sid != nid}
+            if not sups:
+                return ""
+            if len(sups) == 1:
+                (sid, rc), = sups.items()
+                return f"{sid}:{rc.value}"
+            if cnd == CA and all(rc == RC.CONTROL_PLANE_CONFERRING for rc in sups.values()):
+                return ""                    # standing conferral needs no carriage: no shared upstream
+            common = None
+            for sid in sups:
+                dset = doms[idx[sid]] if idx[sid] < n_all else None
+                if dset is None:
+                    continue
+                common = set(dset) if common is None else common & dset
+            common = {ids[c] for c in common} - {nid} if common else set()
+            return ";".join(sorted(f"{c}:upstream" for c in common))
+        # primary H6 rival: ungated distance and redundancy on the subgraph induced by eligible nodes
+        elig_set = {idx[nid] for nid in est_ids if eligible[nid] and du[idx[nid]] >= 0}
+        adj_i = [[v for v in adj_u[u] if v in elig_set] if u in elig_set or u == si else [] for u in range(n_all)]
+        tp_i = [v for v in tp_u if v in elig_set]
+        di = _bfs_multi(adj_i, tp_i, n_all) if tp_i else np.full(n_all, -1)
+        rows = {}
+        for k in est:
+            nid = ids[k]
+            red = 1 if dg[k] == 0 else (_disjoint_paths(adj_g, tp_g, k, n_all, cap) if dg[k] > 0 else 0)
+            redu = 1 if du[k] == 0 else (_disjoint_paths(adj_u, tp_u, k, n_all, cap) if du[k] > 0 else 0)
+            redi = 1 if di[k] == 0 else (_disjoint_paths(adj_i, tp_i, k, n_all, cap) if di[k] > 0 else 0)
+            hubs = [g for g in reach_planes if nid in planes[g][1]]
+            cI, cX, cA = cut_for(nid, CI), cut_for(nid, CX), cut_for(nid, CA)
+            rows[nid] = dict(gated_distance=int(dg[k]), ungated_distance=int(du[k]), induced_distance=int(di[k]),
+                             redundancy=int(red), ungated_redundancy=int(redu), induced_redundancy=int(redi),
+                             cut_I_src=cI, cut_X_src=cX, cut_A_src=cA,
+                             cut_any=int(bool(cI or cX or cA)), mech_reachable=int(dm[k] >= 0),
+                             hub_member=len(hubs), hub_max_fanout=max((len(planes[g][1]) for g in hubs), default=0),
+                             touchpoint=int(k in tp_u))
+        per_source[s] = rows
+        reach_ungated.append(float((du[est_arr] >= 0).mean()))
+    cut = {rc.value: 0 for rc in RC}
+    for nid in est_ids:
+        for cnd in Cond:
+            s_ = S(nid, cnd)
+            if len(s_) == 1:
+                (sid, rc), = s_.items()
+                if sid != nid:
+                    cut[rc.value] += 1
+    fan_max = {}
+    for cls, key in ((RC.CONNECTION, "fanout_max_conn"), (RC.CHANNEL, "fanout_max_chan"),
+                     (RC.CONTROL_PLANE_CONFERRING, "fanout_max_conf"), (RC.CONTROL_PLANE_DIRECTING, "fanout_max_dir")):
+        fan_max[key] = max((len(v) for (s_, rc), v in fan.items() if rc == cls.value), default=0)
+    supplied_corners = [(nid, cnd) for nid in est_ids for cnd in Cond
+                        if len([s for s in S(nid, cnd) if s != nid]) > 0]
+    red_mean = float(np.mean([len([s for s in S(nid, cnd) if s != nid]) for nid, cnd in supplied_corners])) if supplied_corners else 0.0
+    completes_by_supplier: Dict[str, set] = {}
+    for nid in est_ids:
+        if supX[nid] and supA[nid]:
+            for cnd in Cond:
+                for s in S(nid, cnd):
+                    if s != nid:
+                        completes_by_supplier.setdefault(s, set()).add(nid)
+    hub_conc = max((len(v) for v in completes_by_supplier.values()), default=0) / N
+    deg_out = np.array([len(a_) for a_ in adj_u], dtype=float)
+    est_mask = ~ext
+    dmax = deg_out[est_mask].max() if est_mask.any() else 0
+    centralisation = float((dmax - deg_out[est_mask]).sum() / max((N - 1) * (N - 2), 1)) if N > 2 else 0.0
+    cut_adj = [[] for _ in ids]
+    for nid in est_ids:
+        for cnd in Cond:
+            s_ = S(nid, cnd)
+            if len(s_) == 1:
+                (sid, _), = s_.items()
+                if sid != nid:
+                    cut_adj[idx[sid]].append(idx[nid])
+    chain_depth = 0
+    for s_ in range(n_all):
+        if cut_adj[s_]:
+            chain_depth = max(chain_depth, int(_bfs_multi(cut_adj, [s_], n_all).max()))
+    betw = _betweenness_directed(adj_u, n_all)
+    dists = [_bfs_multi(adj_u, [s_], n_all) for s_ in est]
+    pl = [d_[d_ > 0].mean() for d_ in dists if (d_ > 0).any()]
+    src_deg = float(np.mean([len([v for v in adj_u[idx[s]] if not ext[v]]) for s in sources]))
+    arch = dict(
+        n_estate=len(est), n_external=int(ext.sum()), source_degree=src_deg, n_relations=len(spec.relations),
+        f_IXA=float(np.mean([supI[i] and supX[i] and supA[i] for i in est_ids])),
+        f_XA=float(np.mean([supX[i] and supA[i] for i in est_ids])),
+        f_A=float(np.mean([supA[i] for i in est_ids])),
+        f_XA_native=float(np.mean([nat[i][1] and nat[i][2] for i in est_ids])),
+        f_A_native=float(np.mean([nat[i][2] for i in est_ids])),
+        complete_count=int(sum(supX[i] and supA[i] for i in est_ids)),
+        redundancy_mean=red_mean, hub_concentration=float(hub_conc), centralisation=centralisation,
+        chain_depth=int(chain_depth),
+        cut_conn=cut[RC.CONNECTION.value] / N, cut_chan=cut[RC.CHANNEL.value] / N,
+        cut_conf=cut[RC.CONTROL_PLANE_CONFERRING.value] / N, cut_dir=cut[RC.CONTROL_PLANE_DIRECTING.value] / N,
+        **fan_max, boundary_share=ext_rows / n_rows if n_rows else 0.0,
+        deg_mean=float(deg_out[est_mask].mean()) if est_mask.any() else 0.0, deg_max=int(dmax),
+        betw_mean=float(betw[est_mask].mean()) if est_mask.any() else 0.0, betw_max=float(betw.max()),
+        reach_ungated=float(np.mean(reach_ungated)) if reach_ungated else 0.0,
+        n_scc=int(_scc_count(adj_u, n_all)), path_mean=float(np.mean(pl)) if pl else 0.0)
+    return node_static, per_source, arch
 
 
-def _run_tasks(tasks: List[dict], path: str, workers: int, label: str) -> None:
-    """Run in parallel, append each finished row to `path`; resumable."""
-    done = set(pd.read_csv(path)["task_key"].astype(str)) if os.path.exists(path) else set()
-    todo = [t for t in tasks if t["meta"]["task_key"] not in done]
-    print(f"  {label}: {len(tasks)} tasks, {len(done)} done, {len(todo)} to run")
-    if not todo:
+# ---- runs (Section 8) --------------------------------------------------------
+
+def _det_reach(spec, source: str) -> List[str]:
+    c = _core()
+    dspec = make_spec(spec.id, spec.nodes, spec.relations, spec.seed, deterministic=True)
+    net = c.build_network(dspec, np.random.default_rng(1))
+    r = c.run_one_trial(net, np.random.default_rng(1), entry=net.index[source])
+    return sorted(n for n in r["reached_set"] if not net.external[net.index[n]])
+
+
+def run_architecture(task: dict):
+    c = _core()
+    if task["family"] == "mixed":
+        spec, meta, ameta = build_mixed(task)
+    else:
+        spec, meta, ameta = build_canonical(task)
+    sources = ameta["sources"].split(";")
+    node_static, per_source, arch = measure(spec, sources)
+    net = c.build_network(spec, np.random.default_rng(task["seed"]))
+    est_ids = [nid for nid in net.ids if not net.external[net.index[nid]]]
+    for nid in est_ids:
+        node_static[nid]["x_prob"] = float(net.x_prob[net.index[nid]])
+        node_static[nid]["a_prob"] = float(net.a_prob[net.index[nid]])
+    for s, rows in per_source.items():
+        for nid, r in rows.items():
+            if r["ungated_distance"] < 0 and r["gated_distance"] >= 0:
+                raise ICFailure(f"IC6 failed: gated reachable but ungated unreachable at {nid} in {task['arch_id']}")
+            if r["gated_distance"] >= 0 and r["gated_distance"] < r["ungated_distance"]:
+                raise ICFailure(f"IC6 failed: gated distance below ungated at {nid} in {task['arch_id']}")
+            if r["redundancy"] > r["ungated_redundancy"]:
+                raise ICFailure(f"IC6 failed: gated redundancy above ungated at {nid} in {task['arch_id']}")
+            if r["gated_distance"] >= 0 and r["redundancy"] < 1:
+                raise ICFailure(f"IC6 failed: reachable node with redundancy 0 at {nid} in {task['arch_id']}")
+    if task["family"] == "canonical" and ameta.get("n_A_assigned", -1) != int(round(task["f"] * task["N"])):
+        raise ICFailure(f"IC4 failed: A count {ameta.get('n_A_assigned')} for f {task['f']}, N {task['N']} in {task['arch_id']}")
+    n_runs = task["n_runs"] * len(sources)          # Section 8: the configured runs for each source
+    per_src = [task["n_runs"]] * len(sources)
+    events = {s: {nid: 0 for nid in est_ids} for s in sources}
+    runs, fr_all, coll, imp_all, src_of = [], [], [], [], []
+    hit_any = 0
+    elig_union = {s: {nid for nid in est_ids if node_static[nid]["eligible"] and per_source[s][nid]["mech_reachable"]}
+                  for s in sources}
+    t = 0
+    for s, ns in zip(sources, per_src):
+        for _ in range(ns):
+            rs = task["seed"] * 100_003 + t
+            t += 1
+            r = c.run_one_trial(net, np.random.default_rng(rs), entry=net.index[s])
+            first = {}
+            for s_, n_, _ in r["reached"]:
+                if n_ in events[s]:
+                    first.setdefault(n_, s_)
+            for n_ in first:
+                events[s][n_] += 1
+                if n_ not in elig_union[s]:
+                    raise ICFailure(f"IC2 failed: {n_} compromised outside the eligible union of {s} in {task['arch_id']}")
+            fr = len(first) / len(est_ids)
+            fr_all.append(fr); coll.append(bool(r["collapsed"])); hit_any += len(first) > 0; src_of.append(s)
+            imp_all.append(float(sum(node_static[n_]["impact"] for n_ in first)))
+            runs.append(dict(arch_id=task["arch_id"], source=s, run_seed=rs, n_compromised=len(first),
+                             fraction=fr, collapsed=bool(r["collapsed"]), n_steps=r["n_steps"],
+                             first_compromised=";".join(f"{n}:{k}" for n, k in first.items())))
+    fr_all = np.array(fr_all); coll = np.array(coll); imp_all = np.array(imp_all); src_of = np.array(src_of)
+    for s in sources:
+        if fr_all[src_of == s].max() > len(elig_union[s]) / len(est_ids) + 1e-9:
+            raise ICFailure(f"IC2 failed: Y exceeds the eligible union for {s} in {task['arch_id']}")
+    if task["family"] != "mixed" and fr_all.max() > arch["f_A"] + 1e-9:
+        raise ICFailure(f"IC2 failed: Y exceeds f_A in {task['arch_id']}")
+    nrows = []
+    for s, ns in zip(sources, per_src):
+        for nid in est_ids:
+            nrows.append(dict(arch_id=task["arch_id"], source=s, node=nid, role=meta.get(nid, ""),
+                              events=events[s][nid], trials=ns, p=events[s][nid] / max(ns, 1),
+                              **node_static[nid], **per_source[s][nid]))
+    outcomes, src_means = [], []
+    for s in sources:
+        m = src_of == s
+        y = fr_all[m]
+        src_means.append(float(y.mean()))
+        outcomes.append(dict(arch_id=task["arch_id"], source=s, Y=float(y.mean()), var_Y=float(y.var()),
+                             se_Y=float(y.std(ddof=1) / np.sqrt(len(y))) if len(y) > 1 else float("nan"),
+                             first_hop_rate=float((y > 0).mean()), P_collapse=float(coll[m].mean()),
+                             impact_reached=float(imp_all[m].mean()), n_runs=int(m.sum()), var_share_source=float("nan")))
+    ss_b = sum((src_of == s).sum() * (mu - fr_all.mean()) ** 2 for s, mu in zip(sources, src_means))
+    ss_t = float(((fr_all - fr_all.mean()) ** 2).sum())
+    outcomes.append(dict(arch_id=task["arch_id"], source="pooled", Y=float(np.mean(src_means)), var_Y=float(fr_all.var()),
+                         se_Y=float(np.nanmean([o["se_Y"] for o in outcomes]) / np.sqrt(len(sources))),
+                         first_hop_rate=hit_any / n_runs, P_collapse=float(coll.mean()),
+                         impact_reached=float(imp_all.mean()), n_runs=n_runs,
+                         var_share_source=ss_b / ss_t if ss_t > 0 else float("nan")))
+    arow = dict(task["meta"], arch_id=task["arch_id"], family=task["family"], shape=task.get("shape", "mixed"),
+                cell=task.get("cell", ""), seed=task["seed"], N=arch["n_estate"],
+                **ameta,
+                **{f"f_{k}": v for k, v in task.get("factors", {}).items()}, **arch)
+    ic3 = None
+    if task.get("ic3"):
+        ic3 = dict(arch_id=task["arch_id"], shape=task["shape"], variant=task.get("variant", ""),
+                   reached=";".join(_det_reach(spec, sources[0])))
+    return arow, outcomes, nrows, runs, ic3, (spec if task.get("want_spec") else None)
+
+
+# ---- tasks and generation ----------------------------------------------------
+
+def canonical_tasks(sample: str, seed: int, N: int, per_cell: int, n_runs: int) -> List[dict]:
+    T = []
+    fs = DESIGN["f_levels"]
+    def mk(shape, cell, k, **kw):
+        h = hashlib.sha256(f"{seed}|{shape}|{cell}|{k}".encode()).digest()
+        aseed = int.from_bytes(h[:4], "little") % (2 ** 31 - 1) + 1
+        aid = f"{sample}_{seed}_{shape}_{cell}_{k:03d}" + (("_" + kw["variant"]) if kw.get("variant") else "")
+        t = dict(arch_id=aid, family="canonical", shape=shape, cell=cell, seed=aseed, N=N, n_runs=n_runs,
+                 meta=dict(sample=sample, sample_seed=seed, block="", is_primary=True), **kw)
+        return t
+    for f in fs:
+        for j, d in enumerate(mesh_densities(N, f)):
+            for k in range(per_cell):
+                T.append(mk("mesh", f"f{f}_j{j:02d}", k, f=f, d=d, ic3=(f == 1.0 and k == 0)))
+        for n60 in DESIGN["star_n"]:
+            n = scale60(N, n60)
+            for shape in ("star_cp", "star_conn"):
+                for k in range(per_cell):
+                    variants = ["intact", "hub_removed"] + [f"leaves_removed_{scale60(N, r)}" for r in DESIGN["star_leaf_removals"]]
+                    for v in variants:
+                        t = mk(shape, f"f{f}_n{n}", k, f=f, n=n, variant=v, ic3=(f == 1.0 and k == 0 and v in ("intact", "hub_removed")))
+                        t["meta"]["block"] = f"{sample}_{seed}_{shape}_f{f}_n{n}_{k:03d}"
+                        t["meta"]["is_primary"] = v == "intact"
+                        T.append(t)
+            for k in range(per_cell):
+                t = mk("star_hubsource", f"f{f}_n{n}", k, f=f, n=n, variant="hubsource", ic3=(f == 1.0 and k == 0))
+                t["meta"]["is_primary"] = False
+                T.append(t)
+        for shape in ("chain_chan", "chain_conn"):
+            for k in range(per_cell):
+                T.append(mk(shape, f"f{f}", k, f=f, ic3=(f == 1.0 and k == 0)))
+    return T
+
+
+def matched_tasks(sample: str, seed: int, N: int, blocks: int, n_runs: int) -> List[dict]:
+    T = []
+    for f in DESIGN["f_levels"]:
+        for b in range(blocks):
+            h = hashlib.sha256(f"{seed}|matched|{f}|{b}".encode()).digest()
+            aseed = int.from_bytes(h[:4], "little") % (2 ** 31 - 1) + 1
+            block = f"{sample}_{seed}_matched_f{f}_{b:03d}"
+            for shape in ("matched_mesh", "matched_star", "matched_chain"):
+                T.append(dict(arch_id=f"{block}_{shape.split('_')[1]}", family="matched", shape=shape,
+                              cell=f"f{f}", seed=aseed, N=N, n_runs=n_runs, f=f,
+                              meta=dict(sample=sample, sample_seed=seed, block=block, is_primary=True)))
+    return T
+
+
+def mixed_tasks(sample: str, seed: int, ranges: dict, n: int, n_runs: int) -> List[dict]:
+    T = []
+    for k, f in enumerate(draw_factors(n, ranges, seed * 100 + 7)):
+        h = hashlib.sha256(f"{seed}|mixed|{k}".encode()).digest()
+        aseed = int.from_bytes(h[:4], "little") % (2 ** 31 - 1) + 1
+        T.append(dict(arch_id=f"{sample}_{seed}_mixed_{k:04d}", family="mixed", shape="mixed", cell="", seed=aseed,
+                      index=k, n_runs=n_runs, factors=f, meta=dict(sample=sample, sample_seed=seed, block="", is_primary=True)))
+    return T
+
+
+def all_tasks(design: dict, pilot: bool) -> List[dict]:
+    seeds = design["pilot_seeds"] if pilot else design["seeds"]
+    per_cell = design["pilot_arch_per_cell"] if pilot else design["arch_per_cell"]
+    blocks = design["pilot_matched_blocks"] if pilot else design["matched_blocks"]
+    n_mixed = design["pilot_mixed_per_sample"] if pilot else design["mixed_per_sample"]
+    n_runs = design["pilot_runs_per_arch"] if pilot else design["runs_per_arch"]
+    plan = [("development", seeds["development"], FACTORS_DEV, design["n_canonical"])]
+    plan += [("replication", s, FACTORS_DEV, design["n_canonical"]) for s in seeds["replication"]]
+    plan += [("heldout", seeds["heldout"], FACTORS_HELDOUT, design["n_canonical_heldout"])]
+    T = []
+    for sample, seed, ranges, N in plan:
+        T += canonical_tasks(sample, seed, N, per_cell, n_runs)
+        T += matched_tasks(sample, seed, N, blocks, n_runs)
+        T += mixed_tasks(sample, seed, ranges, n_mixed, n_runs)
+    return T
+
+
+ARCH_COLUMNS = (["arch_id", "sample", "sample_seed", "block", "is_primary", "family", "shape", "cell", "seed", "N",
+                 "f_target", "d", "n", "variant", "sources", "source_types", "N_target", "n_A_assigned"]
+                + [f"f_{k}" for k in FACTORS_DEV] + ["n_estate", "n_external", "n_relations"] + ARCH_MEASURES)
+
+
+def _append(path: str, rows: List[dict], columns: Optional[List[str]] = None) -> None:
+    """Append rows with a fixed column set so every family writes the same header."""
+    if not rows:
         return
+    df = pd.DataFrame(rows)
+    if columns is not None:
+        df = df.reindex(columns=columns)
+    if path.endswith(".gz"):
+        buf = io.StringIO()
+        df.to_csv(buf, index=False, header=not os.path.exists(path))
+        with gzip.open(path, "at") as f:
+            f.write(buf.getvalue())
+    else:
+        df.to_csv(path, mode="a", index=False, header=not os.path.exists(path))
+
+
+def generate(run_dir: str, design: dict, workers: int, pilot: bool, cfg: dict) -> None:
+    tasks = all_tasks(design, pilot)
+    for t in tasks:
+        t["want_spec"] = cfg.get("write_specs", True)
+    paths = {k: os.path.join(run_dir, f) for k, f in dict(
+        arch="architectures.csv", out="outcomes.csv", nodes="nodes.csv.gz", runs="runs.csv.gz", ic3="ic3_deterministic.csv").items()}
+    if cfg.get("write_specs", True):
+        os.makedirs(os.path.join(run_dir, "specs"), exist_ok=True)
+    marker = os.path.join(run_dir, "completed.txt")
+    done = set(open(marker).read().split()) if os.path.exists(marker) else set()
+    todo = [t for t in tasks if t["arch_id"] not in done]
+    print(f"  {len(tasks)} architectures x {tasks[0]['n_runs']} runs; {len(done)} done, {len(todo)} to run, {workers} worker(s)")
     t0, n = time.time(), 0
 
-    def _write(row):
-        pd.DataFrame([row]).to_csv(path, mode="a", index=False, header=not os.path.exists(path))
-
-    def _progress():
-        el = time.time() - t0
+    def sink(res):
+        nonlocal n
+        arow, outs, nrows, runs, ic3, spec = res
+        _append(paths["arch"], [arow], ARCH_COLUMNS); _append(paths["out"], outs); _append(paths["nodes"], nrows)
+        if cfg.get("write_runs", True):
+            _append(paths["runs"], runs)
+        if ic3:
+            _append(paths["ic3"], [ic3])
+        if spec is not None:
+            with open(os.path.join(run_dir, "specs", f"{arow['arch_id']}.yaml"), "w") as fh:
+                fh.write(spec_to_yaml(spec))
+        with open(marker, "a") as fh:
+            fh.write(arow["arch_id"] + "\n")     # written last: an architecture counts as done only now
+        n += 1
         if n in (1, 5, 20) or n % max(1, len(todo) // 20) == 0 or n == len(todo):
-            print(f"    {n}/{len(todo)}  elapsed {el/60:.1f} min  "
-                  f"eta {el/n*(len(todo)-n)/60:.1f} min", flush=True)
+            el = time.time() - t0
+            print(f"    {n}/{len(todo)}  elapsed {el/60:.1f} min  eta {el/n*(len(todo)-n)/60:.1f} min", flush=True)
 
     if workers <= 1:
         for t in todo:
-            _write(evaluate_scenario(t)); n += 1; _progress()
+            try:
+                sink(run_architecture(t))
+            except ICFailure as e:
+                raise SystemExit(f"  {e}\n  Generation stopped: an implementation check failed.")
     else:
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            for f in as_completed([ex.submit(evaluate_scenario, t) for t in todo]):
-                _write(f.result()); n += 1; _progress()
+            futs = [ex.submit(run_architecture, t) for t in todo]
+            for fut in as_completed(futs):
+                try:
+                    res = fut.result()
+                except ICFailure as e:
+                    for f_ in futs:
+                        f_.cancel()
+                    raise SystemExit(f"  {e}\n  Generation stopped: an implementation check failed.")
+                sink(res)
 
 
-def sample_plan(design: dict) -> List[Tuple[str, int, str]]:
-    """(sample role, seed, regime) for every validation file."""
-    plan = [("development", design["dev_seed"], "closed")]
-    plan += [("replication", s, "closed") for s in design["replication_seeds"]]
-    plan += [("heldout_regime", design["open_seed"], "open")]
-    return plan
+def time_budget(design: dict, workers: int) -> dict:
+    tasks = [t for t in all_tasks(design, False) if t["meta"]["sample"] == "development"]
+    rng = np.random.default_rng(0)
+    pick = [tasks[i] for i in rng.choice(len(tasks), 50, replace=False)]
+    for t in pick:
+        t["want_spec"] = False
+    t0 = time.time()
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        list(ex.map(run_architecture, pick))
+    wall = time.time() - t0
+    total = len(all_tasks(design, False))
+    est_h = wall / len(pick) * total / 3600
+    print(f"  50 architectures at {design['runs_per_arch']} runs: {wall:.0f} s wall on {workers} workers")
+    print(f"  full design, {total} architectures: about {est_h:.1f} h")
+    return dict(sampled=50, wall_s=wall, workers=workers, total_architectures=total, estimate_h=est_h)
 
 
-def generate(design: dict, run_dir: str, workers: int) -> None:
-    for role, seed, regime in sample_plan(design):
-        rng = np.random.default_rng(seed)
-        tasks = []
-        for i in range(design["n_scenarios"]):
-            params = sample_params(rng, regime)
-            sid = seed * 10000 + i + 1
-            tasks.append(dict(params=params, scenario_seed=sid, n_trials=design["n_trials"],
-                              meta=dict(task_key=str(sid), scenario_id=sid, seed=seed,
-                                        role=role, regime=regime)))
-        _run_tasks(tasks, os.path.join(run_dir, f"validation_{role}_{regime}_seed{seed}.csv"),
-                   workers, f"{role} ({regime}) seed {seed}")
-    if design["oat"]:
-        tasks = []
-        for name, *_ in SAMPLED:
-            for lv in oat_levels(name, design["oat_levels"]):
-                params = dict(BASELINE, **{name: lv},
-                              phantom_cp_rate=0.0, phantom_channel_rate=0.0)
-                tasks.append(dict(params=params, scenario_seed=OAT_SEED,
-                                  n_trials=design["oat_trials"],
-                                  meta=dict(task_key=f"{name}={lv}", param_name=name, level=lv)))
-        _run_tasks(tasks, os.path.join(run_dir, "oat_sweep.csv"), workers, "OAT sweep")
+# ---- scenario file emitter and run record --------------------------------------
 
+def spec_to_yaml(spec) -> str:
+    L = [f"id: {spec.id}", f"spec_version: '{spec.spec_version}'", f"description: {spec.description}", "governance:"]
+    for g in spec.governance:
+        L += [f"- id: {g.id}", f"  defender_controlled: {str(g.defender_controlled).lower()}"]
+    L.append("nodes:")
+    for n in spec.nodes:
+        L += [f"- id: {n.id}", f"  governance: {n.governance}", f"  interface: {str(n.interface).lower()}",
+              f"  execution_pathway: {str(n.execution_pathway).lower()}", f"  authority: {str(n.authority).lower()}",
+              f"  state_object: {n.state_object}", f"  visible: {str(n.visible).lower()}", f"  impact: {n.impact:.6g}"]
+    L.append("relations:")
+    for r in spec.relations:
+        L += [f"- supplier: {r.supplier}", f"  receiver: {r.receiver}", f"  condition: {r.condition.value}",
+              f"  relation_class: {r.relation_class.value}", f"  conferral: {str(r.conferral).lower()}"]
+        if r.group:
+            L.append(f"  group: {r.group}")
+    r_ = spec.rates
+    L += [f"entry_certain: {str(spec.entry_certain).lower()}", f"seed: {spec.seed}",
+          f"deterministic: {str(spec.deterministic).lower()}",
+          "ablation:", f"  structure: {str(spec.ablation.structure).lower()}",
+          f"  time: {str(spec.ablation.time).lower()}", f"  adaptation: {str(spec.ablation.adaptation).lower()}",
+          "rates:"] + [f"  {k}: {getattr(r_, k)}" for k in ("threat_capability", "authority_rate", "execution_rate",
+                                                             "control_variance", "beta_conn", "synchrony", "dependency_factor",
+                                                             "execution_drift_boost", "control_plane_takeover_rate", "authority_boost",
+                                                             "phantom_cp_rate", "phantom_channel_rate", "phantom_dep_rate")]
+    L += ["time:", f"  max_steps: {spec.time.max_steps}", f"  latency_steps: {spec.time.latency_steps}",
+          f"  drift_increment: {spec.time.drift_increment}", f"  exfil_dwell_steps: {spec.time.exfil_dwell_steps}",
+          "adaptation:", f"  remediation_capability: {spec.adaptation.remediation_capability}",
+          f"  threshold: {spec.adaptation.threshold}", f"  simple_policy: {str(spec.adaptation.simple_policy).lower()}"]
+    return "\n".join(L) + "\n"
 
-# ---- pre-specification: written before scoring, enforced at analysis -------
 
 def code_hash() -> str:
-    """SHA-256 of this file with the RUN_CONFIG block removed and line endings
-    normalised, so changing mode or paths does not change the hash but any
-    change to measurement, model, analysis or decision rules does."""
     src = open(os.path.abspath(__file__), "rb").read().replace(b"\r\n", b"\n").decode("utf-8")
     src = re.sub(r"# >>> RUN_CONFIG.*?# <<< RUN_CONFIG", "", src, flags=re.S)
     return hashlib.sha256(src.encode("utf-8")).hexdigest()
 
 
-def prespecification(design: dict, fz: dict) -> dict:
+def run_record(design: dict, fz: dict, pilot: bool) -> dict:
     return json.loads(json.dumps(dict(
-        code_version=CODE_VERSION, code_sha256=code_hash(),
-        core_version=fz["core_version"], freeze_digest=fz["freeze_digest"],
-        design=design, sampled=SAMPLED, open_sampled=OPEN_SAMPLED, fixed=FIXED,
-        baseline=BASELINE, feature_sets=FEATURE_SETS, estimator=ESTIMATOR,
-        formulas={k: v["expr"] for k, v in FORMULAS.items()}, additive=ADD_EXPR,
-        column_map=COLUMN_MAP, h1_axes=H1_AXES,
-        outcome=("scenario collapse rate over all trials; trial collapse = x_true >= 0.30 sustained "
-                 "3 steps; penetration assumed at a uniform Interface node, compromise gated"),
-        measure="Harrell concordance C, paired bootstrap over scenarios, two-sided",
-        decision=("pass iff Delta C >= min_delta_c and BH-adjusted p < alpha; BH family = "
-                  "all confirmatory comparisons H1-H4; H1 and H4 pass only if all parts pass"),
+        code_version=CODE_VERSION, spec_version=SPEC_VERSION, code_sha256=code_hash(),
+        core_version=fz["core_version"], core_digest=fz["freeze_digest"], hash_check=fz["note"],
+        pilot=pilot, design=design, factors_dev=FACTORS_DEV, factors_heldout=FACTORS_HELDOUT,
+        fixed=FIXED, source_types=SOURCE_TYPES, gated=GATED, ungated=UNGATED,
+        python=sys.version.split()[0], rng="numpy PCG64 (default_rng)",
+        packages={m: getattr(__import__(m), "__version__", "n/a") for m in ("numpy", "pandas", "scipy")},
     ), default=str))
 
 
-def check_prespecification(run_dir: str, current: dict) -> Tuple[bool, List[str]]:
-    path = os.path.join(run_dir, "P4A_prespecification.json")
+def write_or_check_record(run_dir: str, rec: dict) -> Tuple[bool, List[str]]:
+    path = os.path.join(run_dir, "run_record.json")
     if not os.path.exists(path):
-        return False, ["no pre-specification record in the run directory"]
+        rec = dict(rec, started=_dt.datetime.now().isoformat(timespec="seconds"))
+        with open(path, "w") as f:
+            json.dump(rec, f, indent=2)
+        return True, []
     saved = json.load(open(path))
-    diffs = [k for k in set(saved) | set(current) if saved.get(k) != current.get(k)]
+    diffs = [k for k in rec if saved.get(k) != rec[k]]
     return not diffs, diffs
 
 
-def write_prespecification(run_dir: str, current: dict) -> None:
-    path = os.path.join(run_dir, "P4A_prespecification.json")
-    if os.path.exists(path):
-        ok, diffs = check_prespecification(run_dir, current)
-        if not ok:
-            raise SystemExit(f"{path} differs from the current file in: {', '.join(sorted(diffs))}. "
-                             "Start a new run_id, or restore the version it was written with.")
-        return
-    with open(path, "w") as f:
-        json.dump(current, f, indent=2)
-
-
 # ############################################################################
-# PART 2: ANALYSIS
+# PART 2: ANALYSIS (Sections 9 to 15)
 # ############################################################################
 
-def _sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# ---- estimators in numpy (no sklearn) -----------------------------------------
+
+class Standardiser:
+    def __init__(self, X):
+        self.mu, self.sd = X.mean(0), X.std(0)
+        self.sd[self.sd < 1e-12] = 1.0
+
+    def __call__(self, X):
+        return (X - self.mu) / self.sd
 
 
-def load_samples(run_dir: str) -> pd.DataFrame:
-    files = sorted(f for f in os.listdir(run_dir) if f.startswith("validation_") and f.endswith(".csv"))
-    if not files:
-        raise SystemExit(f"No validation_*.csv files in {run_dir}.")
-    df = pd.concat([pd.read_csv(os.path.join(run_dir, f)).assign(source_file=f) for f in files],
-                   ignore_index=True)
-    for canon, col in COLUMN_MAP.items():
-        if col in df.columns:
-            df[canon] = df[col]
-    return df
+def binomial_ridge(X, k, n, lam=1.0, iters=60):
+    """Binomial logistic regression (events k of trials n) with ridge on slopes, IRLS."""
+    Xb = np.column_stack([np.ones(len(X)), X])
+    beta = np.zeros(Xb.shape[1])
+    P = lam * np.eye(Xb.shape[1]); P[0, 0] = 0
+    for _ in range(iters):
+        eta = Xb @ beta
+        p = 1 / (1 + np.exp(-np.clip(eta, -30, 30)))
+        W = n * p * (1 - p) + 1e-9
+        g = Xb.T @ (k - n * p) - P @ beta
+        H = Xb.T @ (Xb * W[:, None]) + P
+        step = np.linalg.solve(H, g)
+        beta = beta + step
+        if np.abs(step).max() < 1e-8:
+            break
+    return beta
 
 
-# ---- scoring ---------------------------------------------------------------
-
-def add_reference(dev: pd.DataFrame) -> Dict[str, Tuple[float, float]]:
-    """ADD standardisation constants, fixed once on the development sample."""
-    return {a: (float(dev[a].mean()), float(dev[a].std(ddof=0))) for a in ADD_POS + ADD_NEG}
-
-
-def add_score(df: pd.DataFrame, ref) -> np.ndarray:
-    tot = np.zeros(len(df))
-    for sign, axes in ((1, ADD_POS), (-1, ADD_NEG)):
-        for a in axes:
-            mu, sd = ref[a]
-            if sd > 1e-12:
-                tot += sign * (df[a].values - mu) / sd
-    return tot
-
-
-def formula_score(df: pd.DataFrame, name: str) -> np.ndarray:
-    ns = SimpleNamespace(**{v: df[v].values.astype(float) for v in FORMULAS[name]["vars"]})
-    return np.asarray(FORMULAS[name]["f"](ns), float)
-
-
-def formula_status(df: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for name, spec in FORMULAS.items():
-        absent = [v for v in spec["vars"] if v not in df.columns]
-        const = [v for v in spec["vars"] if v in df.columns and float(df[v].std()) <= 1e-12]
-        rows.append(dict(formula=name, role=spec["role"], expr=spec["expr"],
-                         status="NOT EVALUABLE" if absent else "DEGENERATE" if const else "OK",
-                         absent_inputs=";".join(absent), constant_inputs=";".join(const)))
-    rows.append(dict(formula="ADD", role="additive", expr=ADD_EXPR, status="OK",
-                     absent_inputs="", constant_inputs=""))
-    return pd.DataFrame(rows)
+def binomial_firth(X, k, n, lam=0.0, iters=80):
+    """Binomial logistic regression by Firth penalised likelihood (Heinze and Schemper), with an
+    optional ridge on the slopes. Modified score: X'(k - n p + h (1/2 - p)) - lam beta_slopes."""
+    Xb = np.column_stack([np.ones(len(X)), X])
+    beta = np.zeros(Xb.shape[1])
+    P = lam * np.eye(Xb.shape[1]); P[0, 0] = 0
+    for _ in range(iters):
+        eta = np.clip(Xb @ beta, -30, 30)
+        p = 1 / (1 + np.exp(-eta))
+        W = n * p * (1 - p) + 1e-12
+        XtW = Xb.T * W
+        H = XtW @ Xb + P
+        Hinv = np.linalg.pinv(H)
+        h = np.einsum("ij,jk,ik->i", Xb, Hinv, Xb) * W          # leverages of the weighted fit
+        g = Xb.T @ (k - n * p + h * (0.5 - p)) - P @ beta
+        step = Hinv @ g
+        if np.abs(step).max() > 5:
+            step = step * (5 / np.abs(step).max())
+        beta = beta + step
+        if np.abs(step).max() < 1e-8:
+            break
+    return beta
 
 
-def _logit_rate(df: pd.DataFrame) -> np.ndarray:
-    p = (df["n_collapsed"].values + 0.5) / (df["n_trials"].values + 1.0)
-    return np.log(p / (1 - p))
+def fit_node_model(df: pd.DataFrame, cols: List[str], lam=0.0, sc: Optional[Standardiser] = None) -> dict:
+    X = df[cols].values.astype(float)
+    sc = sc or Standardiser(X)
+    beta = binomial_firth(sc(X), df["events"].values.astype(float), df["trials"].values.astype(float), lam)
+    return dict(cols=cols, sc=sc, beta=beta, lam=lam)
 
 
-def fit_models(dev: pd.DataFrame, seed: int) -> Dict[str, object]:
-    """Every fitted model is trained once on the development sample."""
-    y = _logit_rate(dev)
-    models = {}
-    for name, cols in FEATURE_SETS.items():
-        m = HistGradientBoostingRegressor(
-            max_iter=ESTIMATOR["max_iter"], learning_rate=ESTIMATOR["learning_rate"],
-            max_leaf_nodes=ESTIMATOR["max_leaf_nodes"], min_samples_leaf=ESTIMATOR["min_samples_leaf"],
-            l2_regularization=ESTIMATOR["l2_regularization"], random_state=seed)
-        models[name] = (m.fit(dev[cols].values, y), cols, False)
-    six = H1_AXES
-    models["fit_six_linear"] = (make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(dev[six].values, y), six, False)
-    models["fit_six_log"] = (make_pipeline(StandardScaler(), Ridge(alpha=1.0)).fit(
-        np.log(np.maximum(dev[six].values, 1e-6)), y), six, True)
-    return models
+def cv_ridge(dev: pd.DataFrame, cols: List[str], grid: List[float], folds: int, seed: int) -> Tuple[float, dict]:
+    """Section 13: any stability ridge is chosen by 5-fold cross-validation on development (by
+    architecture) and frozen; the curve is recorded."""
+    archs = dev["arch_id"].unique()
+    rng = np.random.default_rng(seed)
+    fold_of = dict(zip(archs, rng.integers(0, folds, len(archs))))
+    fid = dev["arch_id"].map(fold_of).values
+    sc = Standardiser(dev[cols].values.astype(float))
+    curve = {}
+    for lam in grid:
+        dev_ = 0.0
+        for f in range(folds):
+            tr, te = dev[fid != f], dev[fid == f]
+            if len(tr) == 0 or len(te) == 0:
+                continue
+            m = fit_node_model(tr, cols, lam, sc)
+            eta = np.clip(predict_node_model(m, te), -30, 30)
+            p = 1 / (1 + np.exp(-eta))
+            k, n = te["events"].values, te["trials"].values
+            dev_ += -2 * float(np.sum(k * np.log(p + 1e-12) + (n - k) * np.log(1 - p + 1e-12)))
+        curve[lam] = dev_
+    best = min(curve, key=curve.get)
+    return best, curve
 
 
-def model_score(models, name, df) -> np.ndarray:
-    m, cols, log = models[name]
-    X = df[cols].values
-    return m.predict(np.log(np.maximum(X, 1e-6)) if log else X)
+def predict_node_model(m: dict, df: pd.DataFrame) -> np.ndarray:
+    X = m["sc"](df[m["cols"]].values.astype(float))
+    return np.column_stack([np.ones(len(X)), X]) @ m["beta"]
 
-
-def all_scores(df, names, add_ref, models) -> Dict[str, np.ndarray]:
-    out = {}
-    for n in names:
-        out[n] = add_score(df, add_ref) if n == "ADD" else formula_score(df, n)
-    for n in models:
-        out[n] = model_score(models, n, df)
-    return out
-
-
-# ---- concordance and paired bootstrap --------------------------------------
 
 def concordance(s: np.ndarray, y: np.ndarray) -> float:
-    """Harrell's C between a score and a continuous outcome: probability that
-    the pair with the higher outcome has the higher score, over pairs with
-    different outcomes; score ties count one half."""
+    s, y = np.asarray(s, float), np.asarray(y, float)
     sy = np.sign(y[:, None] - y[None, :])
     denom = np.abs(sy).sum()
     if denom == 0:
@@ -1216,356 +1744,809 @@ def concordance(s: np.ndarray, y: np.ndarray) -> float:
     return float(0.5 + 0.5 * (np.sign(s[:, None] - s[None, :]) * sy).sum() / denom)
 
 
-def bootstrap_c(scores: Dict[str, np.ndarray], y: np.ndarray, n_boot: int, seed: int):
-    """Point C and bootstrap C per score, all scores on the same resamples."""
-    y = y.astype(np.float32)
-    names = list(scores)
-    S = {k: np.asarray(v, np.float32) for k, v in scores.items()}
-    point = {k: concordance(S[k], y) for k in names}
+def within_arch_concordance(df: pd.DataFrame, score: np.ndarray) -> pd.Series:
+    """Concordance within each (architecture, source) unit, averaged to the architecture, so
+    nodes under different sources are never compared with one another."""
+    out = {}
+    for (aid, src), idx in df.groupby(["arch_id", "source"]).indices.items():
+        c = concordance(score[idx], df["p"].values[idx])
+        if np.isfinite(c):
+            out.setdefault(aid, []).append(c)
+    return pd.Series({k: float(np.mean(v)) for k, v in out.items()})
+
+
+def ci(v, alpha=0.05):
+    v = np.asarray(v, float)
+    v = v[np.isfinite(v)]
+    if len(v) == 0:
+        return (float("nan"), float("nan"))
+    return (float(np.percentile(v, 100 * alpha / 2)), float(np.percentile(v, 100 * (1 - alpha / 2))))
+
+
+def boot_over(groups: List[np.ndarray], fn, n_boot: int, seed: int):
+    """Bootstrap resampling within each group of indices; fn(list of index arrays)."""
     rng = np.random.default_rng(seed)
-    boots = np.empty((n_boot, len(names)))
-    for b in range(n_boot):
-        idx = rng.integers(0, len(y), len(y))
-        yb = y[idx]
-        sy = np.sign(yb[:, None] - yb[None, :])
-        denom = np.abs(sy).sum()
-        for j, k in enumerate(names):
-            sb = S[k][idx]
-            boots[b, j] = 0.5 + 0.5 * (np.sign(sb[:, None] - sb[None, :]) * sy).sum() / denom
-    return point, pd.DataFrame(boots, columns=names)
+    return np.array([fn([rng.choice(g, len(g)) for g in groups]) for _ in range(n_boot)])
 
 
-def paired(point, boots, a, b) -> dict:
-    d = boots[a] - boots[b]
-    diff = point[a] - point[b]
-    p = float(min(1.0, 2 * min((d <= 0).mean(), (d >= 0).mean())))
-    p = max(p, 1.0 / (len(d) + 1))
-    return dict(c_a=point[a], c_b=point[b], delta_c=diff,
-                ci_lo=float(np.percentile(d, 2.5)), ci_hi=float(np.percentile(d, 97.5)), p=p)
+# ---- predictions (Section 9) ----------------------------------------------------
+
+def per_step_probs(nodes: pd.DataFrame, shape: str) -> np.ndarray:
+    T, bc, delta = FIXED["threat_capability"], FIXED["beta_conn"], FIXED["dependency_factor"]
+    x, a = nodes["x_prob"].values, nodes["a_prob"].values
+    if shape.endswith("chan"):
+        return np.minimum(1.0, (1 - 1 / (1 + delta)) * a * T)
+    return bc * x * a * T
 
 
-def bh_adjust(p: List[float]) -> List[float]:
-    p = np.asarray(p, float)
-    m = len(p)
-    if m == 0:
-        return []
-    order = np.argsort(p)
-    adj = np.empty(m)
-    prev = 1.0
-    for rank, idx in enumerate(order[::-1]):
-        prev = min(prev, p[idx] * m / (m - rank))
-        adj[idx] = prev
-    return adj.tolist()
+def chain_prediction(nodes: pd.DataFrame, shape: str, H: int) -> np.ndarray:
+    """p_k by dynamic programming over steps: first-passage distribution along the chain."""
+    nodes = nodes.sort_values("depth")
+    pi = per_step_probs(nodes, shape)
+    complete = nodes["complete_chan"].values if shape.endswith("chan") else nodes["complete_conn"].values
+    # first passage of node j at step t given node j-1 first compromised at step s: geometric from s+1
+    prev = np.zeros(H + 1); prev[0] = 1.0            # source compromised at step 0
+    out = []
+    for j in range(len(nodes)):
+        if not complete[j]:
+            out += [0.0] * (len(nodes) - j)
+            break
+        cur = np.zeros(H + 1)
+        for s in range(H):
+            if prev[s] == 0:
+                continue
+            for t in range(s + 1, H + 1):
+                cur[t] += prev[s] * (1 - pi[j]) ** (t - s - 1) * pi[j]
+        out.append(float(cur.sum()))
+        prev = cur
+    return np.array(out)
 
 
-# ---- confirmatory ----------------------------------------------------------
+def mesh_prediction(f_xa: float, N: int, d: float) -> Tuple[float, float]:
+    """(threshold density d*, predicted Y) under the Section 9.4 approximation."""
+    pi = FIXED["beta_conn"] * FIXED["execution_rate"] * FIXED["authority_rate"] * FIXED["threat_capability"]
+    T_H = 1 - (1 - pi) ** FIXED["max_steps"]
+    d_star = 1 / max((N - 1) * f_xa * T_H, 1e-9)
+    c = d * (N - 1) * f_xa * T_H
+    S = 0.0
+    if c > 1:
+        S = 1.0
+        for _ in range(200):
+            S = 1 - np.exp(-c * S)
+    return d_star, f_xa * S * S
 
-CONFIRMATORY = (
-    [("H1", "ADD", s, "replication") for s in ["S_I", "S_A", "S_X", "S_T", "S_rem", "S_vis"]]
-    + [("H2", "F1", "ADD", "replication"),
-       ("H2c", "FC", "F1", "replication"),
-       ("H3", "Phi_op", "Phi_conj", "replication")]
-    + [("H4", "Phi_STA", b, "heldout_regime") for b in ["Phi_ST", "Phi_SA", "Phi_TA"]]
-)
+
+# ---- H1 mesh -------------------------------------------------------------------
+
+def _logistic4(x, L, k, m):
+    return L / (1 + np.exp(-k * (x - m)))
 
 
-def confirmatory(evals: Dict[str, tuple], design: dict) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def fit_sigmoid(logd: np.ndarray, y: np.ndarray, L0: float) -> Tuple[float, float, float]:
+    try:
+        popt, _ = optimize.curve_fit(_logistic4, logd, y, p0=[max(L0, 0.05), 3.0, float(np.median(logd))],
+                                     bounds=([0, 0, logd.min() - 5], [1.0, 100, logd.max() + 5]), maxfev=4000)
+        return float(popt[0]), float(popt[1]), float(popt[2])
+    except Exception:
+        return float("nan"), float("nan"), float("nan")
+
+
+def h1_mesh(df: pd.DataFrame, design: dict) -> dict:
+    d = df[df["shape"] == "mesh"].copy()
+    d["logd"] = np.log(d["d"])
+    fs = sorted(d["f_target"].unique())
+    cells = {(f, dd): g.index.values for (f, dd), g in d.groupby(["f_target", "d"])}
+    def fit_all(idx_lists):
+        rows = []
+        cell_keys = list(cells)
+        means = {k: d.loc[ix, "Y"].mean() for k, ix in zip(cell_keys, idx_lists)}
+        res = {}
+        for f in fs:
+            ks = [k for k in cell_keys if k[0] == f]
+            x = np.array([np.log(k[1]) for k in ks]); y = np.array([means[k] for k in ks])
+            f_xa = d.loc[[cells[k][0] for k in ks], "f_XA"].mean()
+            L, kk, m = fit_sigmoid(x, y, f_xa)
+            res[f] = dict(L=L, slope=kk, midpoint=float(np.exp(m)) if np.isfinite(m) else float("nan"),
+                          y_min=float(y.min()), y_max=float(y.max()), f_xa=float(f_xa),
+                          plateau_gap=float(abs(y[np.argmax(x)] - f_xa)))
+        return res
+    point = fit_all([cells[k] for k in cells])
+    boots = boot_over([cells[k] for k in cells], fit_all, design["n_boot"], design["boot_seed"])
+    out = {}
+    for f in fs:
+        r = point[f]
+        slopes = np.array([b[f]["slope"] for b in boots]); mids = np.array([b[f]["midpoint"] for b in boots])
+        out[f] = dict(**r, slope_ci=ci(slopes), midpoint_ci=ci(mids),
+                      rise=bool(r["y_min"] < 0.10 * r["f_xa"] and r["y_max"] > 0.50 * r["f_xa"]),
+                      d_star_pred=mesh_prediction(r["f_xa"], int(d["N"].iloc[0]), 0.01)[0])
+    mids = np.array([point[f]["midpoint"] for f in fs]); fx = np.array([point[f]["f_xa"] for f in fs])
+    rho = float(stats.spearmanr(fx, mids).correlation)
+    rho_b = np.array([stats.spearmanr(fx, [b[f]["midpoint"] for f in fs]).correlation for b in boots])
+    prod = mids * fx
+    cv = float(np.nanstd(prod) / np.nanmean(prod)) if np.nanmean(prod) > 0 else float("nan")
+    crit = dict(a_rise_and_slope=bool(all(out[f]["rise"] and out[f]["slope_ci"][0] > 0 for f in fs)),
+                b_midpoint_falls=bool(rho < 0 and ci(rho_b)[1] < 0),
+                c_scaling_cv=bool(cv < design["h1_cv_max"]),
+                d_plateau=bool(all(out[f]["plateau_gap"] <= design["h1_plateau_tol"] for f in fs)))
+    return dict(per_f=out, spearman_f_midpoint=rho, spearman_ci=ci(rho_b), midpoint_x_f=prod.tolist(), cv=cv,
+                criteria=crit, passed=bool(all(crit.values())))
+
+
+# ---- H2 star -------------------------------------------------------------------
+
+def h2_star(df: pd.DataFrame, design: dict) -> dict:
+    d = df[df["shape"].isin(["star_cp", "star_conn"])].copy()
+    k_large = {N: scale60(int(N), max(design["star_leaf_removals"])) for N in d["N_target"].unique()}
+    d["variant2"] = d.apply(lambda r: "leaves_removed_k" if r["variant"] == f"leaves_removed_{k_large[r['N_target']]}" else r["variant"], axis=1)
+    d = d[d["variant2"].isin(["intact", "hub_removed", "leaves_removed_k"])]
+    piv = d.pivot_table(index=["shape", "f_target", "n", "block"], columns="variant2", values="Y").reset_index()
+    piv["dY_hub"] = piv["intact"] - piv["hub_removed"]
+    piv["dY_leaves"] = piv["intact"] - piv["leaves_removed_k"]
+    piv["contrast"] = piv["dY_hub"] - piv["dY_leaves"]
+    out, ok = {}, True
+    for (shape, f, n), g in piv.groupby(["shape", "f_target", "n"]):
+        v = g["contrast"].dropna().values
+        b = boot_over([np.arange(len(v))], lambda ix: v[ix[0]].mean(), design["n_boot"], design["boot_seed"])
+        lo, hi = ci(b)
+        out[f"{shape}|f{f}|n{n}"] = dict(n_bases=int(len(v)), mean_contrast=float(v.mean()), ci=(lo, hi),
+                                         dY_hub=float(g["dY_hub"].mean()), dY_leaves=float(g["dY_leaves"].mean()))
+        ok = ok and lo > 0
+    return dict(cells=out, passed=bool(ok))
+
+
+# ---- H3 chain ------------------------------------------------------------------
+
+def _h3_cell(args):
+    """One (form, f) cell: observed profile, prediction, simultaneous band (Section 13)."""
+    shape, f, chains, H, n_sim, seed, sp_max, f1_tol = args
+    rng = np.random.default_rng(seed)
+    depth = max(len(c_["pi"]) for c_ in chains)
+    obs = np.zeros(depth); pred = np.zeros(depth); ntot = 0
+    for c_ in chains:
+        obs += c_["obs"] * c_["trials"]; pred += c_["pred"] * c_["trials"]; ntot += c_["trials"]
+    obs /= ntot; pred /= ntot
+    var = pred * (1 - pred) / ntot
+    zero = var <= 1e-15                    # depths with zero predicted variance: unstandardised comparison
+    se = np.sqrt(np.where(zero, 1.0, var))
+    maxdev, maxstep = np.empty(n_sim), np.empty(n_sim)
+    for b in range(n_sim):
+        acc = np.zeros(depth)
+        for c_ in chains:
+            W = rng.geometric(np.clip(c_["pi"], 1e-9, 1.0), size=(c_["trials"], depth))
+            reach = (np.cumsum(W, axis=1) <= H) & np.cumprod(c_["complete"])[None, :].astype(bool)
+            acc += reach.sum(0)
+        sim = acc / ntot
+        maxdev[b] = np.max(np.abs(sim - pred) / se)
+        maxstep[b] = np.max(np.diff(sim)) if depth > 1 else 0.0
+    crit = float(np.percentile(maxdev, 95))
+    crit_step = float(np.percentile(maxstep, 95))
+    dev_vec = np.abs(obs - pred) / se
+    obs_dev = float(np.max(dev_vec))
+    inside = bool(obs_dev <= crit and np.all(np.abs(obs - pred)[zero] < 1e-12))
+    obs_step = float(np.max(np.diff(obs))) if depth > 1 else 0.0
+    mono = bool(obs_step <= crit_step + 1e-12)
+    f1_ok = bool(np.max(np.abs(obs - pred)) <= f1_tol) if f == 1.0 else True
+    cell_ok = bool(mono and inside and f1_ok)
+    return f"{shape}|f{f}", dict(max_positive_step=obs_step, step_critical=crit_step, monotone=mono,
+                                 inside_band=inside, band_critical=crit, observed_maxdev=obs_dev,
+                                 f1_within_tol=f1_ok, passed=cell_ok, observed=obs.round(4).tolist(),
+                                 predicted=pred.round(4).tolist(), max_abs_gap=float(np.abs(obs - pred).max()))
+
+
+def h3_chain(arch: pd.DataFrame, nodes: pd.DataFrame, design: dict, workers: int = 1) -> Tuple[dict, pd.DataFrame]:
+    H = FIXED["max_steps"]
+    chains = arch[arch["shape"].isin(["chain_chan", "chain_conn"])]
+    nn = nodes[nodes["arch_id"].isin(chains["arch_id"])].copy()
+    nn = nn[nn["role"].astype(str).str.startswith("depth")].copy()
+    nn["depth"] = nn["role"].str[5:].astype(int)
+    jobs, pred_rows = [], []
+    for (shape, f), g in chains.groupby(["shape", "f_target"]):
+        cl = []
+        for aid in g["arch_id"]:
+            cn = nn[nn["arch_id"] == aid].sort_values("depth")
+            pk = chain_prediction(cn, shape, H)
+            complete = (cn["complete_chan"].values if shape.endswith("chan") else cn["complete_conn"].values).astype(int)
+            cl.append(dict(pi=per_step_probs(cn, shape), complete=complete, obs=cn["p"].values.astype(float),
+                           pred=pk, trials=int(cn["trials"].iloc[0])))
+            for k, (p, pr) in enumerate(zip(cn["p"].values, pk), 1):
+                pred_rows.append(dict(arch_id=aid, node=cn["node"].values[k - 1], depth=k, observed=p, predicted=pr))
+        jobs.append((shape, f, cl, H, design["n_boot"], design["boot_seed"], None, design["h3_f1_tol"]))
+    if workers > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=min(workers, len(jobs))) as ex:
+            results = list(ex.map(_h3_cell, jobs))
+    else:
+        results = [_h3_cell(j) for j in jobs]
+    out = dict(results)
+    return dict(cells=out, passed=bool(all(c["passed"] for c in out.values()))), pd.DataFrame(pred_rows)
+
+
+# ---- H4 position and H6 gate ------------------------------------------------------
+
+H4_COLS = ["gated_distance", "log_redundancy", "dist_x_red", "gated_unreachable"]
+
+
+def _node_frame(nodes: pd.DataFrame, arch: pd.DataFrame) -> pd.DataFrame:
+    """Mixed-architecture node rows with the H4 and H6 encodings (Section 13). Directing-plane
+    edges already enter distance and redundancy; membership is not a separate term."""
+    m = nodes.merge(arch[["arch_id", "sample", "family"]], on="arch_id")
+    m = m[m["family"] == "mixed"].copy()
+    m["gated_unreachable"] = (m["gated_distance"] < 0).astype(int)
+    m["ungated_unreachable"] = (m["ungated_distance"] < 0).astype(int)
+    m["induced_unreachable"] = (m["induced_distance"] < 0).astype(int)
+    key = ["arch_id", "source"]
+    for col in ("gated_distance", "ungated_distance", "induced_distance"):
+        mx = m[m[col] >= 0].groupby(key)[col].max().rename("mx")
+        m = m.join(mx, on=key)
+        m[col] = np.where(m[col] >= 0, m[col], m["mx"].fillna(0) + 1)
+        m = m.drop(columns=["mx"])
+    m["log_redundancy"] = np.log1p(np.maximum(m["redundancy"], 0))
+    m["log_ungated_redundancy"] = np.log1p(np.maximum(m["ungated_redundancy"], 0))
+    m["log_induced_redundancy"] = np.log1p(np.maximum(m["induced_redundancy"], 0))
+    m["dist_x_red"] = m["gated_distance"] * m["log_redundancy"]
+    m["udist_x_ured"] = m["ungated_distance"] * m["log_ungated_redundancy"]
+    m["idist_x_ired"] = m["induced_distance"] * m["log_induced_redundancy"]
+    return m.reset_index(drop=True)
+
+
+def h4_position(ev: pd.DataFrame, design: dict, setup: dict) -> dict:
+    """Fitted independently on the evaluation sample with development standardisation and the
+    frozen ridge; architecture-clustered bootstrap intervals."""
+    lam, sc = setup["lam"], setup["sc"]
+    m = fit_node_model(ev, H4_COLS, lam, sc)
+    b = m["beta"]
+    groups = list(ev.groupby("arch_id").indices.values())
+    def refit(ix):
+        return fit_node_model(ev.iloc[np.concatenate(ix)], H4_COLS, lam, sc)["beta"]
+    boots = boot_over(groups, refit, design["n_boot"], design["boot_seed"])
+    coef = {c: dict(estimate=float(b[i + 1]), ci=ci(boots[:, i + 1])) for i, c in enumerate(H4_COLS)}
+    crit = dict(a_distance_negative=bool(coef["gated_distance"]["ci"][1] < 0),
+                b_redundancy_positive=bool(coef["log_redundancy"]["ci"][0] > 0),
+                c_interaction_positive=bool(coef["dist_x_red"]["ci"][0] > 0))
+    return dict(coefficients=coef, lam=lam, n_rows=int(len(ev)), n_architectures=int(len(groups)),
+                criteria=crit, passed=bool(all(crit.values())))
+
+
+GATED_FORM = ["gated_distance", "log_redundancy", "dist_x_red"]
+INDUCED_FORM = ["induced_distance", "log_induced_redundancy", "idist_x_ired"]
+UNGATED_FORM = ["ungated_distance", "log_ungated_redundancy", "udist_x_ured"]
+
+
+def _eligible(df: pd.DataFrame) -> pd.DataFrame:
+    """H6 rows: complete for at least one delivery class available from the source and reachable
+    ungated. Any infinite distance is encoded as the eligible set's maximum finite value plus 1."""
+    e = df[(df["eligible"] == 1) & (df["ungated_unreachable"] == 0)].copy()
+    key = ["arch_id", "source"]
+    for col, flag in (("gated_distance", "gated_unreachable"), ("induced_distance", "induced_unreachable")):
+        fin = e[e[flag] == 0].groupby(key)[col].max().rename("mx")
+        e = e.join(fin, on=key)
+        e[col] = np.where(e[flag] == 0, e[col], e["mx"].fillna(0) + 1)
+        e = e.drop(columns=["mx"])
+    e["dist_x_red"] = e["gated_distance"] * e["log_redundancy"]
+    e["idist_x_ired"] = e["induced_distance"] * e["log_induced_redundancy"]
+    return e.reset_index(drop=True)
+
+
+def h6_gate(dev: pd.DataFrame, ev: pd.DataFrame, design: dict, lam: float) -> dict:
+    dev_e, ev_e = _eligible(dev), _eligible(ev)
+    forms = dict(gated=GATED_FORM, induced=INDUCED_FORM, ungated=UNGATED_FORM)
+    models = {k: fit_node_model(dev_e, cols, lam) for k, cols in forms.items()}
+    C = {k: within_arch_concordance(ev_e, predict_node_model(m_, ev_e)) for k, m_ in models.items()}
+    common = C["gated"].index.intersection(C["induced"].index).intersection(C["ungated"].index)
+    point = {k: float(v[common].mean()) for k, v in C.items()}
+    dev_groups = list(dev_e.groupby("arch_id").indices.values())
+    ev_ids = np.array(common)
+    rng = np.random.default_rng(design["boot_seed"])
+    bd, bd2 = [], []
+    for _ in range(design["n_boot"]):
+        dsub = dev_e.iloc[np.concatenate([rng.choice(g, len(g)) for g in dev_groups])]
+        ms = {k: fit_node_model(dsub, cols, lam) for k, cols in forms.items()}
+        pick = rng.choice(ev_ids, len(ev_ids))
+        sub = ev_e[ev_e["arch_id"].isin(set(pick))]
+        cb = {k: within_arch_concordance(sub, predict_node_model(m_, sub)) for k, m_ in ms.items()}
+        w = pd.Series(pick).value_counts()
+        idx = cb["gated"].index.intersection(cb["induced"].index).intersection(cb["ungated"].index)
+        if len(idx):
+            bd.append(float(np.average(cb["gated"][idx] - cb["induced"][idx], weights=w[idx].values)))
+            bd2.append(float(np.average(cb["gated"][idx] - cb["ungated"][idx], weights=w[idx].values)))
+    bd, bd2 = np.array(bd), np.array(bd2)
+    delta = point["gated"] - point["induced"]
+    return dict(c_gated=point["gated"], c_induced=point["induced"], c_ungated=point["ungated"],
+                delta_c=delta, ci=ci(bd), delta_c_secondary=point["gated"] - point["ungated"], ci_secondary=ci(bd2),
+                n_architectures=int(len(common)), n_rows=int(len(ev_e)), n_excluded=int(len(ev) - len(ev_e)),
+                passed=bool(delta >= design["h6_min_delta_c"] and ci(bd)[0] > 0))
+
+
+# ---- H5 shape ----------------------------------------------------------------------
+
+def h5_shape(df: pd.DataFrame, design: dict) -> dict:
+    d = df[df["family"] == "matched"]
+    piv = d.pivot_table(index=["f_target", "block"], columns="shape", values="Y").reset_index().dropna()
+    strata = [g.index.values for _, g in piv.groupby("f_target")]     # blocks resampled within f
+    out, ok = {}, True
+    def contrast(a_, b_):
+        v = (piv[a_] - piv[b_]).values
+        bs = boot_over(strata, lambda ix: v[np.concatenate(ix)].mean(), design["n_boot"], design["boot_seed"])
+        return v, bs
+    for other in ("matched_star", "matched_mesh"):
+        v, bs = contrast(other, "matched_chain")
+        lo, hi = ci(bs)
+        out[f"{other}_minus_chain"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=(lo, hi))
+        ok = ok and lo > 0 and v.mean() >= design["h5_min_delta"]
+    v, bs = contrast("matched_star", "matched_mesh")
+    out["star_minus_mesh_reported"] = dict(n_blocks=int(len(v)), mean=float(v.mean()), ci=ci(bs))
+    return dict(contrasts=out, passed=bool(ok))
+
+
+# ---- implementation checks (Section 11) --------------------------------------------
+
+def cut_fixtures() -> dict:
+    """Paper 1B eq. (10) on single-supply, alternative-supply and shared-upstream fixtures, evaluated
+    through the same measure() used for every architecture."""
+    c, sp, RC, Cond = _core(), _core().sp, _core().RC, _core().Cond
+    def build(rels):
+        nodes = [_node(sp, n_, "estate", False, True, True) for n_ in ("u", "a", "b", "t")] + [_source(sp)]
+        return make_spec("cutfx", nodes, rels, 1)
+    conn = lambda x, y: sp.Relation(x, y, Cond.INTERFACE, RC.CONNECTION)
+    single = measure(build([conn("src0", "a"), conn("a", "t")]), ["src0"])[1]["src0"]["t"]["cut_I_src"]
+    alt = measure(build([conn("src0", "a"), conn("src0", "b"), conn("a", "t"), conn("b", "t")]), ["src0"])[1]["src0"]["t"]["cut_I_src"]
+    shared = measure(build([conn("src0", "u"), conn("u", "a"), conn("u", "b"), conn("a", "t"), conn("b", "t")]), ["src0"])[1]["src0"]["t"]["cut_I_src"]
+    ok = single.startswith("a:") and alt == "" and "u:upstream" in shared
+    return dict(passed=bool(ok), single_supply=single, alternative_supply=alt or "none", shared_upstream=shared)
+
+
+def implementation_checks(run_dir: str, arch: pd.DataFrame, nodes: pd.DataFrame, pilot: bool) -> dict:
+    res = {}
+    ic3 = os.path.join(run_dir, "ic3_deterministic.csv")
+    ok3, notes = True, []
+    if os.path.exists(ic3):
+        d = pd.read_csv(ic3)
+        for _, r in d.iterrows():
+            reached = set(str(r["reached"]).split(";")) if isinstance(r["reached"], str) else set()
+            nn = nodes[nodes["arch_id"] == r["arch_id"]]
+            if r["shape"].startswith("chain"):
+                want = set(nn[nn["role"].str.startswith("depth")]["node"])
+            elif r["variant"] == "hub_removed":
+                want = set(nn[nn["role"] == "entry_leaf"]["node"])
+            elif r["shape"] == "star_cp":
+                # member takeover of a plane is a rate (Layer 3), not structure: in deterministic
+                # mode a leaf entry reaches the entry leaf only (frozen v0.8 behaviour, stated)
+                want = set(nn[nn["role"] == "entry_leaf"]["node"])
+            elif r["shape"] == "star_hubsource":
+                want = set(nn[nn["role"].isin(["leaf", "entry_leaf"])]["node"])
+            elif r["shape"] == "star_conn":
+                want = set(nn[nn["role"].isin(["leaf", "entry_leaf", "hub"])]["node"])
+            else:
+                want = set(nn[(nn["gated_distance"] >= 0)]["node"])
+            good = reached == want
+            ok3 = ok3 and good
+            if not good:
+                notes.append(f"{r['arch_id']}: reached {len(reached)} expected {len(want)}")
+    res["IC3_structural_exactness"] = dict(passed=ok3, notes=notes[:10],
+                                           note="control-plane star with leaf entry: takeover is a rate, so the deterministic reach is the entry leaf; the hub-source star must reach every member")
+    canon = arch[arch["family"] == "canonical"]
+    exact = (canon["n_A_assigned"] == (canon["f_target"] * canon["N_target"]).round()).all() if len(canon) else True
+    res["IC4_exact_canonical_gate"] = dict(passed=bool(exact), note="A count equals round(fN) before any removal variant")
+    mt = arch[arch["family"] == "matched"]
+    ok5 = True
+    mn = nodes[nodes["arch_id"].isin(mt["arch_id"])].merge(mt[["arch_id", "block", "n_relations"]], on="arch_id")
+    for block, g in mn.groupby("block"):
+        sigs = set()
+        for aid, ga in g.groupby("arch_id"):
+            sig = tuple(sorted(zip(ga["node"], ga["I_native"], ga["X_native"], ga["A_native"],
+                                   ga["x_prob"].round(12), ga["a_prob"].round(12))))
+            sigs.add((sig, int(ga["n_relations"].iloc[0])))
+        ok5 = ok5 and len(sigs) == 1
+    res["IC5_matched_blocks"] = dict(passed=bool(ok5), note="node set, native corners, gate draws and relation count identical within every block")
+    exp_counts = pd.Series([f"{t['meta']['sample']}|{t['family']}|{t.get('shape', 'mixed')}|{t.get('cell', '')}|"
+                            f"{t.get('variant', '' if t['family'] == 'mixed' else 'intact')}"
+                            for t in all_tasks(DESIGN, pilot)]).value_counts()
+    got = (arch["sample"] + "|" + arch["family"] + "|" + arch["shape"] + "|" + arch["cell"].astype(str) + "|" + arch["variant"].astype(str)).value_counts()
+    missing = {k: int(v) for k, v in exp_counts.items() if got.get(k, 0) != v}
+    g = nodes[nodes["gated_distance"] >= 0]
+    res["IC6_measures"] = dict(passed=bool((g["gated_distance"] >= g["ungated_distance"]).all() and (g["redundancy"] >= 1).all()
+                                           and (nodes["redundancy"] <= nodes["ungated_redundancy"]).all()
+                                           and (nodes.loc[nodes["ungated_distance"] < 0, "gated_distance"] < 0).all()),
+                               note="also enforced at build; a violation aborts generation")
+    samples = arch.groupby("sample")["sample_seed"].unique().to_dict()
+    pilot_seeds = set(sum([[DESIGN["pilot_seeds"]["development"], DESIGN["pilot_seeds"]["heldout"]] + DESIGN["pilot_seeds"]["replication"]], []))
+    res["IC7_samples"] = dict(passed=bool((pilot or not any(s in pilot_seeds for v in samples.values() for s in v)) and not missing),
+                              seeds={k: [int(x) for x in v] for k, v in samples.items()},
+                              cells_with_wrong_count=len(missing), examples=dict(list(missing.items())[:5]))
+    res["IC2_ceiling"] = dict(passed=True, note="enforced during generation against the source-specific eligible union; any violation aborted the run")
+    res["IC6_fixtures"] = ic6_fixtures()
+    res["IC6_cut_fixtures"] = cut_fixtures()
+    res["IC8_validate_guard"] = dict(passed=True, note="ScenarioSpec.validate is replaced at load by a guard that aborts if called")
+    return res
+
+
+# ---- exploratory, docker, figures -------------------------------------------------------
+
+def exploratory(arch: pd.DataFrame, nodes: pd.DataFrame, pilot: bool) -> pd.DataFrame:
     rows = []
-    for hyp, a, b, sample in CONFIRMATORY:
-        point, boots = evals[sample]
-        rows.append(dict(hypothesis=hyp, comparison=f"{a} > {b}", sample=sample,
-                         **paired(point, boots, a, b)))
-    t = pd.DataFrame(rows)
-    t["p_bh"] = bh_adjust(t["p"].tolist())
-    t["pass"] = (t["delta_c"] >= design["min_delta_c"]) & (t["p_bh"] < design["alpha"])
-    verdict = (t.groupby("hypothesis")
-               .agg(n_comparisons=("pass", "size"), n_pass=("pass", "sum"))
-               .reset_index())
-    verdict["verdict"] = np.where(verdict["n_pass"] == verdict["n_comparisons"], "SUPPORTED", "NOT SUPPORTED")
-    return t, verdict
+    hs = arch[arch["shape"] == "star_hubsource"]
+    for (f, n), g in hs.groupby(["f_target", "n"]):
+        rows.append(dict(section="star_hub_source", key=f"f{f}_n{n}", value=float(g["Y"].mean()), note="Y with the source as the plane controller"))
+    mt = arch[arch["family"] == "matched"]
+    for f, g in mt.groupby("f_target"):
+        p = g.pivot_table(index="block", columns="shape", values="Y")
+        for s in p.columns:
+            rows.append(dict(section="matched_Y", key=f"f{f}_{s}", value=float(p[s].mean()), note="mean Y by arrangement"))
+    mx = nodes.merge(arch[["arch_id", "family"]], on="arch_id")
+    mx = mx[mx["family"] == "mixed"]
+    for dist, g in mx.groupby("ungated_distance"):
+        a, b = g[(g["boundary_X"] == 1) | (g["boundary_A"] == 1)], g[(g["boundary_X"] == 0) & (g["boundary_A"] == 0)]
+        if len(a) >= 20 and len(b) >= 20:
+            rows.append(dict(section="boundary_supply", key=f"dist{dist}", value=float(a["p"].mean() - b["p"].mean()),
+                             note="p(outside X or A) minus p(inside) at equal ungated distance"))
+    pi_c = FIXED["beta_conn"] * FIXED["execution_rate"] * FIXED["authority_rate"]
+    for f in DESIGN["f_levels"]:
+        q = f * (1 - (1 - pi_c) ** FIXED["max_steps"])
+        k = math.ceil(math.log(0.05) / math.log(q)) if 0 < q < 1 else float("inf")
+        rows.append(dict(section="diminishing_hops", key=f"f{f}", value=float(k), note="single-path depth at which predicted p falls below 0.05 (connection, horizon 50)"))
+    rows.append(dict(section="value_weighted", key="corr_impact_Y", value=float(arch[["impact_reached", "Y"]].corr().iloc[0, 1]), note="correlation of impact reached with Y"))
+    top = mx[mx["impact"] >= mx["impact"].quantile(0.9)]
+    rows.append(dict(section="value_weighted", key="p_top_decile_impact", value=float(top["p"].mean()), note="mean p of the highest-impact decile of nodes (mixed)"))
+    for fam, g in arch.groupby("family"):
+        rows.append(dict(section="variance_split", key=fam, value=float(g["var_share_source"].mean()), note="share of within-architecture variance explained by the source"))
+    fc = [c for c in arch.columns if c.startswith("f_") and c[2:] in FACTORS_DEV]
+    if fc:
+        C = arch[arch["family"] == "mixed"][fc].corr().abs()
+        rows.append(dict(section="factor_correlations", key="max_abs_offdiag", value=float(np.nanmax(C.values - np.eye(len(fc)))), note="Latin hypercube caveat"))
+    if pilot:
+        for m_ in NODE_MEASURES:
+            if m_ in mx.columns and mx[m_].std() > 0:
+                rows.append(dict(section="pilot_screen_node", key=m_, value=concordance(mx[m_].values, mx["p"].values), note="single-measure concordance with p (mixed)"))
+        ma = arch[arch["family"] == "mixed"]
+        for m_ in ARCH_MEASURES:
+            if m_ in ma.columns and ma[m_].std() > 0:
+                rows.append(dict(section="pilot_screen_arch", key=m_, value=concordance(ma[m_].values, ma["Y"].values), note="single-measure concordance with Y (mixed)"))
+    return pd.DataFrame(rows)
 
 
-# ---- secondary: operational 0.15 label, AUC and DeLong ----------------------
+def write_docker_subsample(run_dir: str, design: dict) -> None:
+    """Nine predetermined Docker-scale counterparts at N = 30, f = 0.6, seed 4201 (Section 14)."""
+    rows = []
+    sdir = os.path.join(run_dir, "docker_h2_specs")
+    os.makedirs(sdir, exist_ok=True)
+    seed = design["seeds"]["development"]
+    N, f = design["docker_n"], design["docker_f"]
+    d_star, _ = mesh_prediction(f, N, 0.01)
+    grid = mesh_densities(N, f)
+    nearest = lambda x: min(grid, key=lambda g: abs(np.log(g) - np.log(x)))
+    plan = [("mesh", dict(d=nearest(0.5 * d_star))), ("mesh", dict(d=nearest(d_star))), ("mesh", dict(d=nearest(2 * d_star))),
+            ("star_cp", dict(n=20, variant="intact")), ("star_cp", dict(n=20, variant="hub_removed")),
+            ("star_conn", dict(n=20, variant="intact")),
+            ("chain_conn", dict(depth=12)), ("chain_chan", dict(depth=12, sixth=True)), ("chain_chan", dict(depth=12, sixth=False))]
+    for k, (shape, kw) in enumerate(plan):
+        aid = f"docker_{k:02d}_{shape}" + (f"_{kw['variant']}" if kw.get("variant") else "") + ("_negcontrol" if kw.get("sixth") is False else "")
+        # the matched chain pair shares one seed so the two differ only at the sixth node
+        task = dict(arch_id=aid, family="canonical", shape=shape, seed=seed * 1000 + (7 if shape == "chain_chan" else k), N=N, f=f, meta={}, **kw)
+        spec, meta, ameta = build_canonical(task)
+        reach = _det_reach(spec, "src0")
+        with open(os.path.join(sdir, aid + ".yaml"), "w") as fh:
+            fh.write(spec_to_yaml(spec))
+        rows.append(dict(arch_id=aid, shape=shape, variant=kw.get("variant", ""), neg_control=bool(kw.get("sixth") is False),
+                         N=N, f=f, d=kw.get("d", ""), model_reach_set=";".join(reach), n_seeds=design["docker_seeds"],
+                         observed_reach_set=""))
+    pd.DataFrame(rows).to_csv(os.path.join(run_dir, "docker_h2.csv"), index=False)
 
-def _midrank(x):
-    J = np.argsort(x); Z = x[J]; N = len(x); T = np.zeros(N); i = 0
-    while i < N:
-        j = i
-        while j < N and Z[j] == Z[i]:
-            j += 1
-        T[i:j] = 0.5 * (i + j - 1) + 1
-        i = j
-    out = np.empty(N); out[J] = T
+
+# ---- the three generated figures (Section 3.6) ----------------------------------------------
+
+def _tri(cx, cy, r, held, cls="#5F5E5A", open_col="#0F6E56"):
+    """A node triangle centred (cx, cy): corners I top, X bottom-left, A bottom-right; held = (I, X, A)."""
+    pts = [(cx, cy - r), (cx - 0.87 * r, cy + 0.5 * r), (cx + 0.87 * r, cy + 0.5 * r)]
+    L = [f'<polygon points="{" ".join(f"{x:.1f},{y:.1f}" for x, y in pts)}" fill="none" stroke="#888780" stroke-width="1"/>']
+    for (x, y), h in zip(pts, held):
+        L.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{cls if h else "none"}" stroke="{cls if h else open_col}" stroke-width="1.5"/>')
+    return "\n".join(L), pts
+
+
+def write_theory_figures(run_dir: str, figs: str) -> None:
+    hdr = '<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" font-family="sans-serif" font-size="11"><rect width="{w}" height="{h}" fill="white"/>'
+    # 1 the eight-glyph key
+    L = [hdr.format(w=640, h=220)]
+    kinds = [("native", (1, 1, 1)), ("I", (0, 1, 1)), ("X", (1, 0, 1)), ("A", (1, 1, 0)),
+             ("I and X", (0, 0, 1)), ("I and A", (0, 1, 0)), ("X and A", (1, 0, 0)), ("all three", (0, 0, 0))]
+    for k, (name, held) in enumerate(kinds):
+        cx, cy = 60 + (k % 4) * 150, 50 + (k // 4) * 90
+        t, _ = _tri(cx, cy, 24, held, cls="#534AB7" if name == "native" else "#0F6E56")
+        L += [t, f'<text x="{cx}" y="{cy + 42}" text-anchor="middle">{name}</text>']
+    L.append('<text x="20" y="208">Filled corner: held by the node. Open corner: supplied by another node. I top, X left, A right.</text></svg>')
+    open(os.path.join(figs, "fig1_eight_glyph_key.svg"), "w", encoding="utf-8").write("\n".join(L))
+    # 2 a network of triangles from the first saved mixed scenario file
+    sdir = os.path.join(run_dir, "specs")
+    mixed = sorted(f for f in os.listdir(sdir) if "_mixed_" in f)[:1] if os.path.isdir(sdir) else []
+    if mixed:
+        c = _core()
+        raw = open(os.path.join(sdir, mixed[0])).read()
+        node_ids = re.findall(r"^- id: (\S+)", raw, flags=re.M)
+        govs = dict(zip(node_ids, re.findall(r"^  governance: (\S+)", raw, flags=re.M)))
+        rels = re.findall(r"- supplier: (\S+)\n  receiver: (\S+)\n  condition: (\S+)", raw)
+        est = [n for n in node_ids if govs.get(n) == "estate"][:24]
+        ext = [n for n in node_ids if govs.get(n) != "estate"][:4]
+        pos = {}
+        for k, n in enumerate(est):
+            pos[n] = (70 + (k % 6) * 90, 60 + (k // 6) * 90)
+        for k, n in enumerate(ext):
+            pos[n] = (640, 60 + k * 90)
+        L = [hdr.format(w=720, h=440), '<rect x="20" y="20" width="560" height="400" rx="8" fill="none" stroke="#888780" stroke-dasharray="4 4"/>',
+             '<text x="28" y="412">Organisation boundary</text>']
+        held = {}
+        for n in node_ids:
+            m_ = re.search(rf"^- id: {re.escape(n)}\n  governance: \S+\n  interface: (\S+)\n  execution_pathway: (\S+)\n  authority: (\S+)", raw, flags=re.M)
+            held[n] = tuple(v == "true" for v in m_.groups()) if m_ else (1, 1, 1)
+        corner = {"interface": 0, "execution_pathway": 1, "authority": 2}
+        for sup, rec, cond in rels:
+            if rec in pos and sup in pos and sup != rec:
+                t, pts = _tri(*pos[rec], 16, held[rec])
+                x, y = pts[corner.get(cond, 0)]
+                col = "#993C1D" if govs.get(sup) != "estate" else "#0F6E56"
+                L.append(f'<line x1="{x:.1f}" y1="{y:.1f}" x2="{pos[sup][0]:.1f}" y2="{pos[sup][1]:.1f}" stroke="{col}" stroke-width="1" stroke-dasharray="3 3"/>')
+        for n, (x, y) in pos.items():
+            t, _ = _tri(x, y, 16, held[n])
+            L += [t, f'<text x="{x}" y="{y + 30}" text-anchor="middle">{n}</text>']
+        L.append("</svg>")
+        open(os.path.join(figs, "fig2_network_of_triangles.svg"), "w", encoding="utf-8").write("\n".join(L))
+    # 3 the three shapes
+    L = [hdr.format(w=640, h=220)]
+    for k, (name, inc) in enumerate((("Mesh", "WannaCry"), ("Star", "CrowdStrike"), ("Chain", "SolarWinds"))):
+        cx = 110 + k * 210
+        if name == "Mesh":
+            P = [(cx - 40, 60), (cx + 40, 60), (cx - 40, 130), (cx + 40, 130)]
+            E = [(0, 1), (2, 3), (0, 2), (1, 3), (0, 3)]
+        elif name == "Star":
+            P = [(cx, 95), (cx - 60, 50), (cx + 60, 50), (cx - 60, 140), (cx + 60, 140)]
+            E = [(0, 1), (0, 2), (0, 3), (0, 4)]
+        else:
+            P = [(cx, 45), (cx, 95), (cx, 145)]
+            E = [(0, 1), (1, 2)]
+        for a_, b_ in E:
+            L.append(f'<line x1="{P[a_][0]}" y1="{P[a_][1]}" x2="{P[b_][0]}" y2="{P[b_][1]}" stroke="#0F6E56" stroke-width="1.2" stroke-dasharray="3 3"/>')
+        for x, y in P:
+            L.append(_tri(x, y, 12, (1, 1, 1))[0])
+        L += [f'<text x="{cx}" y="185" text-anchor="middle" font-weight="bold">{name}</text>',
+              f'<text x="{cx}" y="202" text-anchor="middle">{inc}</text>']
+    L.append("</svg>")
+    open(os.path.join(figs, "fig3_three_shapes.svg"), "w", encoding="utf-8").write("\n".join(L))
+
+
+def cfg_v8_reanalysis(run_dir: str) -> Optional[pd.DataFrame]:
+    """Section 15: on the v8 validation files, mean collapse rate by supplied-capability quintile
+    against connection density. Written only when RUN_CONFIG['v8_run_dir'] points at the v8 run."""
+    v8 = RUN_CONFIG.get("v8_run_dir")
+    if not v8 or not os.path.isdir(v8):
+        return None
+    files = [f for f in os.listdir(v8) if f.startswith("validation_") and f.endswith(".csv")]
+    if not files:
+        return None
+    df = pd.concat([pd.read_csv(os.path.join(v8, f)) for f in files], ignore_index=True)
+    if "capability_supplied" not in df or "conn_density_realised" not in df:
+        return None
+    df["cap_q"] = pd.qcut(df["capability_supplied"].rank(method="first"), 5, labels=False)
+    df["dens_q"] = pd.qcut(df["conn_density_realised"].rank(method="first"), 8, labels=False)
+    out = df.groupby(["cap_q", "dens_q"]).agg(collapse=("trial_collapse_rate", "mean"), n=("trial_collapse_rate", "size"),
+                                              capability=("capability_supplied", "mean"), density=("conn_density_realised", "mean")).reset_index()
+    out.to_csv(os.path.join(run_dir, "v8_reanalysis.csv"), index=False)
     return out
 
 
-def delong_test(y, a, b) -> dict:
-    y = np.asarray(y).astype(int)
-    order = np.argsort(-y)
-    ys = y[order]
-    P = np.vstack([np.asarray(a, float)[order], np.asarray(b, float)[order]])
-    m = int(ys.sum()); n = len(ys) - m
-    if m == 0 or n == 0:
-        return dict(auc_a=np.nan, auc_b=np.nan, diff=np.nan, z=np.nan, p=np.nan)
-    tx = np.array([_midrank(r[:m]) for r in P]); ty = np.array([_midrank(r[m:]) for r in P])
-    tz = np.array([_midrank(r) for r in P])
-    aucs = tz[:, :m].sum(1) / (m * n) - (m + 1.0) / (2.0 * n)
-    cov = np.atleast_2d(np.cov((tz[:, :m] - tx) / n) / m + np.cov(1.0 - (tz[:, m:] - ty) / m) / n)
-    se = float(np.sqrt(max(cov[0, 0] + cov[1, 1] - 2 * cov[0, 1], 0.0)))
-    z = (aucs[0] - aucs[1]) / se if se > 0 else 0.0
-    return dict(auc_a=float(aucs[0]), auc_b=float(aucs[1]), diff=float(aucs[0] - aucs[1]),
-                z=float(z), p=float(2 * (1 - norm.cdf(abs(z)))))
-
-
-def secondary_auc(df, scores, design) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Operational outcome definition: scenario positive iff collapse rate >=
-    threshold. Fixed-form scores only, development sample."""
-    rows, dl = [], []
-    for thr in design["secondary_thresholds"]:
-        y = (df["trial_collapse_rate"].values >= thr).astype(int)
-        npos, nneg = int(y.sum()), int((1 - y).sum())
-        if min(npos, nneg) < 3:
-            continue
-        for k, s in scores.items():
-            nv = len(FORMULAS[k]["vars"]) if k in FORMULAS else 6
-            epv = min(npos, nneg) / nv
-            rows.append(dict(threshold=thr, score=k, auc=roc_auc_score(y, s), n_pos=npos,
-                             n_neg=nneg, epv_min_class=epv))
-        for a, b in [("ADD", s) for s in ["S_I", "S_A", "S_X", "S_T", "S_rem", "S_vis"]] + \
-                    [("F1", "ADD"), ("FC", "F1")]:
-            dl.append(dict(threshold=thr, pair=f"{a} vs {b}", **delong_test(y, scores[a], scores[b])))
-    dl = pd.DataFrame(dl)
-    if len(dl):
-        dl["p_bh"] = bh_adjust(dl["p"].tolist())
-    return pd.DataFrame(rows), dl
-
-
-def interaction_screen(df, axes, thr, n_perm, seed) -> pd.DataFrame:
-    """Additive vs interaction logistic per pair, standardisation inside each
-    fold, empirical permutation p-value. Secondary, operational label."""
-    y = (df["trial_collapse_rate"].values >= thr).astype(int)
-    if min(int(y.sum()), int((1 - y).sum())) < 10:
-        return pd.DataFrame()
-    cv = StratifiedKFold(5, shuffle=True, random_state=0)
-    add_m = make_pipeline(StandardScaler(), LogisticRegression(max_iter=500))
-    int_m = make_pipeline(StandardScaler(), PolynomialFeatures(2, interaction_only=True, include_bias=False),
-                          LogisticRegression(max_iter=500))
-
-    def lift(X, yy):
-        pa = cross_val_predict(add_m, X, yy, cv=cv, method="predict_proba")[:, 1]
-        pi = cross_val_predict(int_m, X, yy, cv=cv, method="predict_proba")[:, 1]
-        return roc_auc_score(yy, pi) - roc_auc_score(yy, pa)
-
-    rng = np.random.default_rng(seed)
-    axes = [a for a in axes if a in df.columns and df[a].std() > 1e-12]
-    rows = []
-    for i in range(len(axes)):
-        for j in range(i + 1, len(axes)):
-            X = df[[axes[i], axes[j]]].values
-            obs = lift(X, y)
-            null = np.array([lift(X, rng.permutation(y)) for _ in range(n_perm)])
-            rows.append(dict(axis_i=axes[i], axis_j=axes[j], interaction_lift=obs,
-                             null_mean=float(null.mean()),
-                             p_perm=float((1 + (null >= obs).sum()) / (1 + n_perm))))
-    out = pd.DataFrame(rows)
-    out["p_bh"] = bh_adjust(out["p_perm"].tolist())
-    return out.sort_values("p_perm")
-
-
-def oat_profile_similarity(sw: pd.DataFrame, n_grid=20) -> pd.DataFrame:
-    """Exploratory: correlation between normalised one-at-a-time response
-    profiles of collapse rate. Not a global identifiability analysis."""
-    prof = {}
-    for param, g in sw.groupby("param_name"):
-        v = g.sort_values("level")["trial_collapse_rate"].values.astype(float)
-        if len(v) >= 2 and np.ptp(v) > 1e-9:
-            v = (v - v.min()) / np.ptp(v)
-            prof[param] = np.interp(np.linspace(0, 1, n_grid), np.linspace(0, 1, len(v)), v)
-    names = sorted(prof)
-    if len(names) < 2:
-        return pd.DataFrame()
-    M = np.corrcoef(np.vstack([prof[n] for n in names]))
-    return pd.DataFrame([dict(param_i=names[i], param_j=names[j], profile_corr=float(M[i, j]))
-                         for i in range(len(names)) for j in range(i + 1, len(names))]
-                        ).sort_values("profile_corr", key=np.abs, ascending=False)
-
-
-# ---- figures and report ----------------------------------------------------
-
-def plot_ladder(ctab: pd.DataFrame, path: str) -> None:
-    order = ["best_single_descriptive", "ADD", "F1", "FC", "Phi_conj", "Phi_rel", "Phi_op"]
-    t = ctab[ctab.score.isin(order)].set_index("score").reindex(order).dropna(subset=["c"])
-    fig, ax = plt.subplots(figsize=(7, 3.6))
-    x = np.arange(len(t))
-    ax.errorbar(x, t["c"], yerr=[t["c"] - t["ci_lo"], t["ci_hi"] - t["c"]], fmt="o", color="#1D4ED8")
-    ax.set_xticks(x)
-    ax.set_xticklabels(t.index, rotation=20)
-    ax.set_ylabel("concordance C with collapse rate")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(path, dpi=200)
-    plt.close()
-
-
-def plot_roc(df, scores, names, thr, path) -> None:
-    y = (df["trial_collapse_rate"].values >= thr).astype(int)
-    if min(int(y.sum()), int((1 - y).sum())) < 3:
-        return
-    fig, ax = plt.subplots(figsize=(5.4, 5.0))
-    for n in names:
-        fpr, tpr, _ = roc_curve(y, scores[n])
-        ax.plot(fpr, tpr, lw=1.6, label=f"{n} (AUC {roc_auc_score(y, scores[n]):.3f})")
-    ax.plot([0, 1], [0, 1], ls="--", lw=0.8, color="#999999")
-    ax.set_xlabel("false positive rate")
-    ax.set_ylabel("true positive rate")
-    ax.legend(frameon=False, loc="lower right", fontsize=8)
-    plt.tight_layout()
-    plt.savefig(path, dpi=200)
-    plt.close()
-
-
-def write_summary(path, verdict, conf, ctab, status, fz, pre_ok, pre_diffs, design) -> None:
-    L = [f"# Paper 4A analysis, {CODE_VERSION}", ""]
-    L.append(f"- Substrate: embedded cemt_core {fz['core_version']}, {fz['note']}")
-    L.append(f"- Pre-specification: {'matches' if pre_ok else 'DOES NOT MATCH (' + ', '.join(pre_diffs) + ')'}")
-    L.append(f"- Decision rule: Delta C >= {design['min_delta_c']} and BH-adjusted p < "
-             f"{design['alpha']} (BH over all {len(conf)} confirmatory comparisons)")
-    L += ["", "## Verdicts", "", "| Hypothesis | Comparisons passing | Verdict |", "|---|---|---|"]
-    for _, r in verdict.iterrows():
-        L.append(f"| {r.hypothesis} | {r.n_pass}/{r.n_comparisons} | {r.verdict} |")
-    L += ["", "## Confirmatory comparisons", "",
-          "| H | Comparison | Sample | C (a) | C (b) | Delta C | 95% CI | p | p (BH) | Pass |",
-          "|---|---|---|---|---|---|---|---|---|---|"]
-    for _, r in conf.iterrows():
-        L.append(f"| {r.hypothesis} | {r.comparison} | {r['sample']} | {r.c_a:.3f} | {r.c_b:.3f} | "
-                 f"{r.delta_c:+.3f} | [{r.ci_lo:+.3f}, {r.ci_hi:+.3f}] | {r.p:.3g} | {r.p_bh:.3g} | {r['pass']} |")
-    L += ["", "## Concordance by score and sample (descriptive)", "",
-          "| Sample | Score | C | 95% CI |", "|---|---|---|---|"]
-    for _, r in ctab.iterrows():
-        L.append(f"| {r['sample']} | {r.score} | {r.c:.3f} | [{r.ci_lo:.3f}, {r.ci_hi:.3f}] |")
-    L += ["", "## Candidate status", "", "| Formula | Role | Status | Constant inputs |", "|---|---|---|---|"]
-    for _, r in status.iterrows():
-        L.append(f"| {r.formula} | {r.role} | {r.status} | {r.constant_inputs or '-'} |")
+def svg_lines(series: Dict[str, Tuple[np.ndarray, np.ndarray]], path: str, xlab: str, ylab: str, logx=False) -> None:
+    W, Hh, m = 640, 400, 60
+    xs = np.concatenate([np.asarray(v[0], float) for v in series.values()])
+    ys = np.concatenate([np.asarray(v[1], float) for v in series.values()])
+    if logx:
+        xs = np.log10(xs)
+    x0, x1 = float(np.nanmin(xs)), float(np.nanmax(xs)); y0, y1 = 0.0, max(float(np.nanmax(ys)), 1e-6)
+    sx = lambda x: m + (x - x0) / max(x1 - x0, 1e-9) * (W - 2 * m)
+    sy = lambda y: Hh - m - (y - y0) / max(y1 - y0, 1e-9) * (Hh - 2 * m)
+    cols = ["#1D4ED8", "#0F6E56", "#993C1D", "#534AB7", "#5F5E5A", "#B45309"]
+    L = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{Hh}" font-family="sans-serif" font-size="12">',
+         f'<rect width="{W}" height="{Hh}" fill="white"/>',
+         f'<line x1="{m}" y1="{Hh-m}" x2="{W-m}" y2="{Hh-m}" stroke="#333"/>',
+         f'<line x1="{m}" y1="{m}" x2="{m}" y2="{Hh-m}" stroke="#333"/>',
+         f'<text x="{W/2}" y="{Hh-15}" text-anchor="middle">{xlab}</text>',
+         f'<text x="15" y="{Hh/2}" text-anchor="middle" transform="rotate(-90 15 {Hh/2})">{ylab}</text>']
+    for k, (name, (x, y)) in enumerate(series.items()):
+        x = np.log10(np.asarray(x, float)) if logx else np.asarray(x, float)
+        pts = " ".join(f"{sx(a):.1f},{sy(b):.1f}" for a, b in zip(x, y) if np.isfinite(a) and np.isfinite(b))
+        L.append(f'<polyline points="{pts}" fill="none" stroke="{cols[k % len(cols)]}" stroke-width="1.6"/>')
+        L.append(f'<text x="{W-m+5}" y="{m+14*k}" fill="{cols[k % len(cols)]}">{name}</text>')
+    for t in np.linspace(y0, y1, 5):
+        L.append(f'<text x="{m-8}" y="{sy(t)+4}" text-anchor="end">{t:.2f}</text>')
+    for t in np.linspace(x0, x1, 5):
+        lab = f"{10**t:.3g}" if logx else f"{t:.3g}"
+        L.append(f'<text x="{sx(t)}" y="{Hh-m+16}" text-anchor="middle">{lab}</text>')
+    L.append("</svg>")
     with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(L) + "\n")
+        f.write("\n".join(L))
 
 
-def analyse(run_dir: str, design: dict, fz: dict, pre_ok: bool, pre_diffs: List[str]) -> dict:
-    p = lambda name: os.path.join(run_dir, f"P4A_{name}")
-    df = load_samples(run_dir)
-    dev = df[df.role == "development"].reset_index(drop=True)
-    rep = df[df.role == "replication"].reset_index(drop=True)
-    opn = df[df.role == "heldout_regime"].reset_index(drop=True)
-    if dev.empty or rep.empty or opn.empty:
-        raise SystemExit("Development, replication and held-out regime samples are all required.")
+# ---- summary --------------------------------------------------------------------------------
 
-    status = formula_status(dev)
-    status.to_csv(p("candidate_status.csv"), index=False)
-    fixed_names = [r.formula for r in status.itertuples() if r.status == "OK"]
-    print(f"\n{CODE_VERSION}: dev {len(dev)}, replication {len(rep)}, held-out regime {len(opn)}; "
-          f"fixed forms evaluable: {len(fixed_names)}")
+def _fmt_ci(c):
+    return f"[{c[0]:+.3f}, {c[1]:+.3f}]" if all(np.isfinite(c)) else "[nan, nan]"
 
-    add_ref = add_reference(dev)
-    pd.DataFrame([dict(axis=k, mean=v[0], sd=v[1]) for k, v in add_ref.items()]).to_csv(
-        p("ADD_standardisation.csv"), index=False)
-    print("  fitting models on the development sample...")
-    models = fit_models(dev, design["model_seed"])
 
-    evals, ctab_rows = {}, []
-    for label, d in (("development", dev), ("replication", rep), ("heldout_regime", opn)):
-        sc = all_scores(d, fixed_names, add_ref, models)
-        six = {k: sc[k] for k in ["S_I", "S_A", "S_X", "S_T", "S_rem", "S_vis"]}
-        best = max(six, key=lambda k: concordance(six[k], d["trial_collapse_rate"].values))
-        sc["best_single_descriptive"] = six[best]
-        print(f"  bootstrap concordance on {label} ({design['n_boot']} resamples)...")
-        point, boots = bootstrap_c(sc, d["trial_collapse_rate"].values, design["n_boot"], design["boot_seed"])
-        evals[label] = (point, boots)
-        for k in sc:
-            ctab_rows.append(dict(sample=label, score=k, c=point[k],
-                                  ci_lo=float(np.percentile(boots[k], 2.5)),
-                                  ci_hi=float(np.percentile(boots[k], 97.5)),
-                                  note=(f"= {best}" if k == "best_single_descriptive" else "")))
-    ctab = pd.DataFrame(ctab_rows)
-    ctab.to_csv(p("concordance_by_score.csv"), index=False)
+def write_summary(run_dir: str, final: dict, by_sample: dict, ic: dict, fz: dict, rec_ok: bool, pilot: bool,
+                  n: dict, exp: pd.DataFrame) -> str:
+    L = [f"# Paper 4A v{VERSION} summary: {'PILOT (no verdicts)' if pilot else 'CONFIRMATORY'}", "",
+         f"- Run: {os.path.basename(run_dir)}  |  {fz['note']}  |  record {'matches' if rec_ok else 'DIFFERS'}",
+         f"- Architectures: " + ", ".join(f"{k} {v}" for k, v in n.items()), "",
+         "## Verdicts (pass required on 4201, 4202 and 4301 separately)", "",
+         "| H | Verdict | 4201 | 4202 | 4301 |", "|---|---|---|---|---|"]
+    def mark(v):
+        return "pass" if v is True else "fail" if v is False else str(v)
+    for h in ("H1", "H2", "H3", "H4", "H5", "H6"):
+        L.append(f"| {h} | {mark(final.get(h))} | " + " | ".join(mark(by_sample.get(s, {}).get(h, {}).get("passed", "n/a")) for s in ("rep4201", "rep4202", "held4301")) + " |")
+    L += ["", "## Implementation checks", ""]
+    for k, v in ic.items():
+        L.append(f"- {k}: {'pass' if v.get('passed') else 'FAIL'}" + (f" ({v['notes'][:3]})" if v.get("notes") else ""))
+    L += ["", "## Key estimates by sample", ""]
+    for s, v in by_sample.items():
+        L.append(f"### {s}")
+        h1 = v.get("H1", {})
+        if h1:
+            L.append(f"- H1 mesh: Spearman(f, midpoint) {h1['spearman_f_midpoint']:+.2f} {_fmt_ci(h1['spearman_ci'])}, CV(midpoint x f) {h1['cv']:.2f}; criteria {h1['criteria']}")
+            for f, r in h1["per_f"].items():
+                L.append(f"    f={f}: midpoint d {r['midpoint']:.4f} CI [{r['midpoint_ci'][0]:.4f}, {r['midpoint_ci'][1]:.4f}], predicted d* {r['d_star_pred']:.4f}, plateau gap {r['plateau_gap']:.3f}, rise {r['rise']}")
+        h2 = v.get("H2", {})
+        if h2:
+            worst = min(h2["cells"].items(), key=lambda kv: kv[1]["ci"][0])
+            L.append(f"- H2 star: {sum(c['ci'][0] > 0 for c in h2['cells'].values())}/{len(h2['cells'])} cells with CI lower > 0; weakest {worst[0]} contrast {worst[1]['mean_contrast']:+.3f} {_fmt_ci(worst[1]['ci'])}")
+        h3 = v.get("H3", {})
+        if h3:
+            for k_, c in h3["cells"].items():
+                L.append(f"- H3 {k_}: max +step {c['max_positive_step']:.3f} (crit {c['step_critical']:.3f}), max std dev {c['observed_maxdev']:.2f} (crit {c['band_critical']:.2f}), max gap {c['max_abs_gap']:.3f}, pass {c['passed']}")
+        h4 = v.get("H4", {})
+        if h4:
+            co = h4["coefficients"]
+            L.append(f"- H4 position (Firth, ridge {h4['lam']}): distance {co['gated_distance']['estimate']:+.3f} {_fmt_ci(co['gated_distance']['ci'])}, "
+                     f"log redundancy {co['log_redundancy']['estimate']:+.3f} {_fmt_ci(co['log_redundancy']['ci'])}, "
+                     f"interaction {co['dist_x_red']['estimate']:+.3f} {_fmt_ci(co['dist_x_red']['ci'])}; criteria {h4['criteria']}")
+        h5 = v.get("H5", {})
+        if h5:
+            for k_, c in h5["contrasts"].items():
+                L.append(f"- H5 {k_}: {c['mean']:+.3f} {_fmt_ci(c['ci'])} (blocks {c['n_blocks']})")
+        h6 = v.get("H6", {})
+        if h6:
+            L.append(f"- H6 gate (primary, induced-subgraph rival): C gated {h6['c_gated']:.3f} vs {h6['c_induced']:.3f}, delta {h6['delta_c']:+.3f} {_fmt_ci(h6['ci'])} (eligible rows {h6['n_rows']}, architectures {h6['n_architectures']})")
+            L.append(f"    secondary, whole-graph rival: C {h6['c_ungated']:.3f}, delta {h6['delta_c_secondary']:+.3f} {_fmt_ci(h6['ci_secondary'])}")
+        L.append("")
+    if len(exp):
+        L += ["## Exploratory headlines", ""]
+        for sec in ("matched_Y", "star_hub_source", "diminishing_hops", "value_weighted", "variance_split", "factor_correlations", "boundary_supply"):
+            g = exp[exp["section"] == sec]
+            if len(g):
+                L.append(f"- {sec}: " + ", ".join(f"{r.key} {r.value:.3f}" for r in g.itertuples()))
+    txt = "\n".join(L) + "\n"
+    with open(os.path.join(run_dir, "P4A_summary.md"), "w", encoding="utf-8") as f:
+        f.write(txt)
+    return txt
 
-    conf, verdict = confirmatory(evals, design)
-    conf.to_csv(p("confirmatory.csv"), index=False)
-    verdict.to_csv(p("verdicts.csv"), index=False)
 
-    rep_rows = []
-    for seed, d in rep.groupby("seed"):
-        d = d.reset_index(drop=True)
-        sc = all_scores(d, ["ADD", "F1", "FC"] + ["S_I", "S_A", "S_X", "S_T", "S_rem", "S_vis"], add_ref, {})
-        y = d["trial_collapse_rate"].values
-        rep_rows.append(dict(seed=seed, **{f"C_{k}": concordance(v, y) for k, v in sc.items()}))
-    pd.DataFrame(rep_rows).to_csv(p("replication_by_seed.csv"), index=False)
+# ---- analysis driver -----------------------------------------------------------------------
 
-    # Descriptive decomposition from the same trials: entry compromise and
-    # collapse given entry compromise. Not part of any verdict.
-    cond_rows = []
-    for label, d in (("development", dev), ("replication", rep), ("heldout_regime", opn)):
-        sc = all_scores(d, [n for n in fixed_names], add_ref, models)
-        for outcome in ("entry_compromise_rate", "conditional_collapse_rate"):
-            m = d[outcome].notna().values
-            y = d[outcome].values[m]
-            for k in DESCRIPTIVE_SCORES + list(FEATURE_SETS):
-                if k in sc:
-                    cond_rows.append(dict(sample=label, outcome=outcome, score=k,
-                                          n=int(m.sum()), c=concordance(sc[k][m], y)))
-    pd.DataFrame(cond_rows).to_csv(p("decomposition_concordance.csv"), index=False)
-
-    dev_scores = all_scores(dev, fixed_names, add_ref, {})
-    aucs, dls = secondary_auc(dev, dev_scores, design)
-    aucs.to_csv(p("secondary_auc.csv"), index=False)
-    dls.to_csv(p("secondary_delong.csv"), index=False)
-    six_auc = {k: v for k, v in dev_scores.items() if k in ["S_I", "S_A", "S_X", "S_T", "S_rem", "S_vis"]}
-    ythr = (dev["trial_collapse_rate"].values >= design["secondary_threshold"]).astype(int)
-    if 0 < ythr.sum() < len(ythr):
-        bs = max(six_auc, key=lambda k: roc_auc_score(ythr, six_auc[k]))
-        plot_roc(dev, dev_scores, [bs, "ADD", "F1", "FC"], design["secondary_threshold"], p("roc_secondary.png"))
-    plot_ladder(ctab[ctab["sample"] == "replication"], p("concordance_ladder.png"))
-
-    print(f"  interaction screen ({design['n_perm']} permutations per pair)...")
-    inter = interaction_screen(dev, COUPLING_AXES, design["secondary_threshold"],
-                               design["n_perm"], design["boot_seed"])
-    inter.to_csv(p("interaction_screen.csv"), index=False)
-
-    oat = os.path.join(run_dir, "oat_sweep.csv")
-    if os.path.exists(oat):
-        oat_profile_similarity(pd.read_csv(oat)).to_csv(p("oat_profile_similarity.csv"), index=False)
-
-    write_summary(p("summary.md"), verdict, conf, ctab, status, fz, pre_ok, pre_diffs, design)
-    files = sorted(f for f in os.listdir(run_dir) if f.startswith("validation_") or f == "oat_sweep.csv"
-                   or f == "P4A_prespecification.json")
-    manifest = dict(
-        code_version=CODE_VERSION, code_sha256=code_hash(),
-        generated=_dt.datetime.now().isoformat(timespec="seconds"),
-        core_version=fz["core_version"], freeze_digest=fz["freeze_digest"], freeze_note=fz["note"],
-        prespecification_matches=pre_ok, prespecification_differences=pre_diffs,
-        citable=bool(fz["verified"] and pre_ok),
-        python=sys.version.split()[0],
-        packages={m: getattr(__import__(m), "__version__", "n/a")
-                  for m in ("numpy", "pandas", "scipy", "sklearn", "matplotlib")},
-        inputs={f: _sha256(os.path.join(run_dir, f)) for f in files},
-        outputs=sorted(f for f in os.listdir(run_dir) if f.startswith("P4A_")) + ["P4A_manifest.json"])
-    with open(p("manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2, default=str)
-
-    print("\nVerdicts:")
-    for _, r in verdict.iterrows():
-        print(f"  {r.hypothesis:4s} {r.n_pass}/{r.n_comparisons}  {r.verdict}")
-    print(f"Citable: {manifest['citable']}.  Outputs -> {run_dir}")
-    return dict(verdict=verdict, confirmatory=conf)
+def analyse(run_dir: str, design: dict, fz: dict, rec_ok: bool, rec_diffs: List[str], workers: int, pilot: bool) -> dict:
+    arch = pd.read_csv(os.path.join(run_dir, "architectures.csv"))
+    out = pd.read_csv(os.path.join(run_dir, "outcomes.csv"))
+    nodes = pd.read_csv(os.path.join(run_dir, "nodes.csv.gz"), low_memory=False,
+                        dtype={"cut_I_src": str, "cut_X_src": str, "cut_A_src": str, "role": str})
+    for col in ("cut_I_src", "cut_X_src", "cut_A_src", "role"):
+        nodes[col] = nodes[col].fillna("")
+    arch = arch.merge(out[out["source"] == "pooled"].drop(columns=["source"]), on="arch_id")
+    arch["block"] = arch["block"].fillna("")
+    for col in ("variant", "cell"):
+        arch[col] = arch[col].fillna("")
+    n = arch.groupby("family")["arch_id"].count().to_dict()
+    print(f"\n{CODE_VERSION}: {len(arch)} architectures, {len(nodes)} node rows")
+    ic = implementation_checks(run_dir, arch, nodes, pilot)
+    failed = [k for k, v in ic.items() if not v.get("passed")]
+    if failed and not pilot:
+        raise SystemExit("Implementation checks failed: " + ", ".join(failed))
+    if failed:
+        print("  PILOT: implementation checks failed: " + ", ".join(failed))
+    dev_nodes = _node_frame(nodes, arch[arch["sample"] == "development"])
+    lam, curve = cv_ridge(dev_nodes, H4_COLS, design["h4_ridge_grid"], design["h4_cv_folds"], design["model_seed"])
+    print(f"  H4 ridge chosen on development by {design['h4_cv_folds']}-fold CV: {lam} (curve {curve})")
+    h4_setup = dict(lam=lam, cv_curve={str(k): v for k, v in curve.items()},
+                    sc=Standardiser(dev_nodes[H4_COLS].values.astype(float)))
+    samples = {"rep4201": ("replication", design["seeds"]["replication"][0]),
+               "rep4202": ("replication", design["seeds"]["replication"][1] if len(design["seeds"]["replication"]) > 1 else None),
+               "held4301": ("heldout", design["seeds"]["heldout"])}
+    if pilot:
+        samples = {"rep4201": ("replication", design["pilot_seeds"]["replication"][0]), "rep4202": ("replication", None),
+                   "held4301": ("heldout", design["pilot_seeds"]["heldout"])}
+    by_sample, preds = {}, []
+    for label, (role, seed) in samples.items():
+        if seed is None:
+            continue
+        a = arch[(arch["sample"] == role) & (arch["sample_seed"] == seed)]
+        if a.empty:
+            continue
+        print(f"  {label}: H1..H6 on {len(a)} architectures ...", flush=True)
+        ev = _node_frame(nodes, a)
+        r3, p3 = h3_chain(a, nodes, design, workers)
+        preds.append(p3)
+        by_sample[label] = dict(H1=h1_mesh(a, design), H2=h2_star(a, design), H3=r3,
+                                H4=h4_position(ev, design, h4_setup), H5=h5_shape(a, design),
+                                H6=h6_gate(dev_nodes, ev, design, lam))
+    mesh = arch[arch["shape"] == "mesh"]
+    for _, r in mesh.iterrows():
+        d_star, y_pred = mesh_prediction(float(r["f_XA"]), int(r["N"]), float(r["d"]))
+        preds.append(pd.DataFrame([dict(arch_id=r["arch_id"], node="", depth=np.nan, quantity="Y",
+                                        observed=r["Y"], predicted=y_pred, d_star=d_star)]))
+    stars = arch[arch["shape"].isin(["star_cp", "star_conn"]) & (arch["variant"] == "intact")]
+    for _, r in stars.iterrows():
+        p0 = float(nodes[(nodes["arch_id"] == r["arch_id"]) & (nodes["role"] == "entry_leaf")]["p"].mean()) if len(nodes) else np.nan
+        preds.append(pd.DataFrame([dict(arch_id=r["arch_id"], node="", depth=np.nan, quantity="dY_hub",
+                                        observed=np.nan, predicted=r["Y"] - p0 / r["N"], d_star=np.nan),
+                                   dict(arch_id=r["arch_id"], node="", depth=np.nan, quantity="dY_leaves_k",
+                                        observed=np.nan, predicted=scale60(int(r["N_target"]), 5) / r["n"] * r["Y"], d_star=np.nan)]))
+    if preds:
+        pd.concat(preds).to_csv(os.path.join(run_dir, "predictions.csv"), index=False)
+    v8 = cfg_v8_reanalysis(run_dir)
+    final = {}
+    for h in ("H1", "H2", "H3", "H4", "H5", "H6"):
+        if pilot:
+            final[h] = "NO VERDICT (pilot)"
+            continue
+        reps = [by_sample.get(k, {}).get(h, {}).get("passed") for k in ("rep4201", "rep4202")]
+        held = by_sample.get("held4301", {}).get(h, {}).get("passed")
+        if all(r is True for r in reps) and held is True:
+            final[h] = True
+        elif all(r is True for r in reps) and held is False:
+            final[h] = "SUPPORTED UNDER REPLICATION, NOT GENERALISED"
+        elif len(reps) == 2 and all(r is not None for r in reps) and held is not None:
+            final[h] = False
+        else:
+            final[h] = "INCOMPLETE"
+    exp = exploratory(arch, nodes, pilot)
+    exp.to_csv(os.path.join(run_dir, "exploratory.csv"), index=False)
+    if not pilot:
+        write_docker_subsample(run_dir, design)
+    figs = os.path.join(run_dir, "figures"); os.makedirs(figs, exist_ok=True)
+    try:
+        write_theory_figures(run_dir, figs)
+    except Exception as e:
+        print(f"  theory figures failed softly: {e}")
+    try:
+        for label, v in by_sample.items():
+            mesh = arch[(arch["shape"] == "mesh") & (arch["sample_seed"] == samples[label][1])]
+            ser = {f"f={f}": (g.groupby("d")["Y"].mean().index.values, g.groupby("d")["Y"].mean().values) for f, g in mesh.groupby("f_target")}
+            svg_lines(ser, os.path.join(figs, f"H1_mesh_{label}.svg"), "connection density d (log)", "Y", logx=True)
+            ser = {k_: (np.arange(1, len(c["observed"]) + 1), np.array(c["observed"])) for k_, c in v["H3"]["cells"].items()}
+            svg_lines(ser, os.path.join(figs, f"H3_chain_{label}.svg"), "depth k", "p_k")
+    except Exception as e:
+        print(f"  figure generation failed softly: {e}")
+    with open(os.path.join(run_dir, "verdicts.json"), "w") as f:
+        json.dump(dict(code_version=CODE_VERSION, spec_version=SPEC_VERSION, code_sha256=code_hash(), pilot=pilot,
+                       citable=bool(fz["verified"] and rec_ok and not pilot and not failed), final=final,
+                       h4_ridge=dict(chosen=lam, cv_curve={str(k): v for k, v in curve.items()}),
+                       by_sample=by_sample, implementation_checks=ic,
+                       generated=_dt.datetime.now().isoformat(timespec="seconds")), f, indent=2, default=str)
+    rec_path = os.path.join(run_dir, "run_record.json")
+    with open(rec_path) as f_:
+        rec = json.load(f_)
+    rec["h4_ridge"] = dict(chosen=lam, cv_curve={str(k): v for k, v in curve.items()})
+    with open(rec_path, "w") as f_:
+        json.dump(rec, f_, indent=2)
+    txt = write_summary(run_dir, final, by_sample, ic, fz, rec_ok, pilot, n, exp)
+    with open(os.path.join(run_dir, "verdicts.txt"), "w", encoding="utf-8") as f:
+        f.write(txt)
+    print("\n" + txt)
+    print(f"Outputs -> {run_dir}")
+    return final
 
 
 # ############################################################################
 # ENTRY POINT
 # ############################################################################
 
-MODES = [("SMOKE", "smoke", "pilot seeds, 40 scenarios x 20 trials, minutes, not for the paper"),
-         ("ALL", "all", "full confirmatory run: generate, then analyse (hours)"),
-         ("GENERATE", "generate", "generate or resume samples only"),
+MODES = [("PILOT", "pilot", "pilot seeds, reduced budget, broad screen, no verdicts"),
+         ("TIME", "time", "time 50 architectures at full runs; writes the budget estimate"),
+         ("ALL", "all", "full confirmatory run: generate every sample, then analyse"),
+         ("GENERATE", "generate", "generate or resume the confirmatory samples only"),
          ("ANALYSE", "analyse", "analyse an existing run directory")]
 
 
@@ -1576,17 +2557,16 @@ def choose_mode() -> str:
     while True:
         a = input("Enter number or name: ").strip().upper()
         for k, (label, mode, _) in enumerate(MODES, 1):
-            if a in (str(k), label, mode.upper()):
+            if a in (str(k), label):
                 return mode
         print("  not recognised")
 
 
 def choose_run_id(out_root: str) -> str:
-    runs = sorted((d for d in os.listdir(out_root)
-                   if os.path.exists(os.path.join(out_root, d, "P4A_prespecification.json")))
-                  if os.path.isdir(out_root) else [])
+    runs = sorted(d for d in os.listdir(out_root)
+                  if os.path.exists(os.path.join(out_root, d, "run_record.json"))) if os.path.isdir(out_root) else []
     if not runs:
-        raise SystemExit(f"No runs with a pre-specification record under {out_root}.")
+        raise SystemExit(f"No runs with a run record under {out_root}.")
     print("Existing runs:")
     for k, r in enumerate(runs, 1):
         print(f"  {k}  {r}")
@@ -1601,7 +2581,7 @@ def choose_run_id(out_root: str) -> str:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=CODE_VERSION)
-    ap.add_argument("--mode", type=str.lower, choices=["smoke", "all", "generate", "analyse"])
+    ap.add_argument("--mode", type=str.lower, choices=[m[1] for m in MODES])
     ap.add_argument("--run-id")
     ap.add_argument("--out-root")
     ap.add_argument("--workers", type=int)
@@ -1616,45 +2596,47 @@ def main(argv=None):
     mode = str(cfg["mode"]).lower()
     if mode == "ask":
         mode = choose_mode()
-    if mode not in ("smoke", "all", "generate", "analyse"):
-        raise SystemExit(f"Unknown mode {cfg['mode']!r}.")
-    if mode == "analyse" and not cfg["run_id"]:
-        cfg["run_id"] = choose_run_id(cfg["out_root"])
-
+    workers = cfg["workers"] or max(1, (os.cpu_count() or 2) - 2)
     print("=" * 70)
     print(f"  {CODE_VERSION}   mode={mode}")
     print("=" * 70)
     fz = freeze_status()
     print(f"  embedded cemt_core {fz['core_version']}: {fz['note']}")
-
+    if not fz["verified"]:
+        raise SystemExit("  IC1 failed: hash mismatch, run aborted.")
+    if mode == "time":
+        est = time_budget(DESIGN, workers)
+        os.makedirs(cfg["out_root"], exist_ok=True)
+        with open(os.path.join(cfg["out_root"], f"time_estimate_v{VERSION}.json"), "w") as f:
+            json.dump(est, f, indent=2)
+        return
+    if mode == "analyse" and not cfg["run_id"]:
+        cfg["run_id"] = choose_run_id(cfg["out_root"])
+    pilot = mode == "pilot"
     run_id = cfg["run_id"] or _dt.datetime.now().strftime("%Y%m%d_%H%M%S") + f"_p4a_{mode}_v{VERSION}"
     run_dir = os.path.join(cfg["out_root"], run_id)
     os.makedirs(run_dir, exist_ok=True)
     print(f"  run directory: {run_dir}")
-
-    pre_path = os.path.join(run_dir, "P4A_prespecification.json")
-    if mode in ("smoke", "all", "generate"):
-        design = dict(DESIGN, **(SMOKE_DESIGN if mode == "smoke" else {}))
-        if os.path.exists(pre_path):
-            design = json.load(open(pre_path))["design"]     # resume under the saved design
-        write_prespecification(run_dir, prespecification(design, fz))
-        workers = cfg["workers"] or max(1, (os.cpu_count() or 2) - 2)
-        n = (2 + len(design["replication_seeds"])) * design["n_scenarios"]
-        print(f"  {n} scenarios x {design['n_trials']} trials, {workers} worker(s)")
-        generate(design, run_dir, workers)
-    if mode in ("smoke", "all", "analyse"):
-        if not os.path.exists(pre_path):
-            raise SystemExit(f"No pre-specification record in {run_dir}.")
-        design = json.load(open(pre_path))["design"]
-        pre_ok, diffs = check_prespecification(run_dir, prespecification(design, fz))
-        if not pre_ok:
-            msg = ("The current file differs from the run's pre-specification in: "
-                   + ", ".join(sorted(diffs)) + ".")
-            if not cfg["exploratory"]:
-                raise SystemExit(msg + " Analysis stopped. Restore the pre-specified version, "
-                                 "or set exploratory=True for a non-citable analysis.")
-            print("  WARNING: " + msg + " Exploratory analysis; output is not citable.")
-        analyse(run_dir, design, fz, pre_ok, diffs)
+    rec_path = os.path.join(run_dir, "run_record.json")
+    if mode == "analyse" and not os.path.exists(rec_path):
+        raise SystemExit("No run record in that directory.")
+    if os.path.exists(rec_path):
+        pilot = bool(json.load(open(rec_path)).get("pilot", False))   # resume under the recorded design
+    rec_ok, diffs = write_or_check_record(run_dir, run_record(DESIGN, fz, pilot))
+    if not rec_ok:
+        msg = "The current file differs from the run record in: " + ", ".join(sorted(diffs)) + "."
+        if not cfg["exploratory"]:
+            raise SystemExit(msg + " Stopped. Restore the recorded version or set exploratory=True.")
+        print("  WARNING: " + msg + " Exploratory; output is not citable.")
+    if mode in ("pilot", "all", "generate"):
+        generate(run_dir, DESIGN, workers, pilot, cfg)
+    if mode in ("pilot", "all", "analyse"):
+        analyse(run_dir, dict(DESIGN, n_boot=DESIGN["pilot_n_boot"]) if pilot else DESIGN, fz, rec_ok, diffs, workers, pilot)
+        with open(rec_path) as f:
+            rec = json.load(f)
+        rec["finished"] = _dt.datetime.now().isoformat(timespec="seconds")
+        with open(rec_path, "w") as f:
+            json.dump(rec, f, indent=2)
 
 
 if __name__ == "__main__":
