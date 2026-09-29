@@ -1,7 +1,20 @@
 # -*- coding: utf-8 -*-
 """
-PhDPaper4A v11: Structure. Per-node compromise probability on cemt_core v0.8
+PhDPaper4A v13: Structure. Per-node compromise probability on cemt_core v0.8
 ==============================================================================
+
+Version history (the confirmatory run 20260920_215757_p4a_all_v12 was produced
+by v12; its run_record.json holds the v12 code hash):
+  v12 (2026-09-20)  frozen confirmatory code.
+  v13 (2026-09-27)  two changes, neither touching generation:
+    (1) H3 zero rule, corrected 22 Sept 2026 after the confirmatory run: a
+        zero depth is now a structural zero only (prediction exactly 0) and
+        must be observed as 0; v12 flagged predicted variance <= 1e-15 and
+        required agreement within 1e-12, which failed three cells on
+        predictions of order 1e-12. Post hoc; ANALYSE writes it to an
+        exploratory_analysis subfolder (see _h3_cell).
+    (2) FIGURES mode and the publication-figure layer: vector PDF and SVG
+        figures sized for IEEEtran, read from a finished run. Reads only.
 
 Implements "Paper 4A Specification v12: Structure" (20 September 2026).
 
@@ -15,7 +28,7 @@ architectures.
 
 One self-contained file. The frozen cemt_core v0.8 is embedded byte for byte
 and hash-checked at load (digest 97dbae47); a mismatch aborts. Third-party
-libraries: numpy, pandas, scipy only. Everything new is driver-level or
+libraries: numpy, pandas, scipy only (matplotlib for FIGURES mode only). Everything new is driver-level or
 analysis-level: no mechanic of the frozen core changes.
 
 Entry (specification Sections 5, 6.3, 8): every architecture carries external
@@ -52,7 +65,9 @@ Implementation checks IC1..IC8 (Section 11) abort the run on failure.
 
 Modes: PILOT (pilot seeds, reduced budget, broad screen, no verdicts), TIME
 (budget estimate), ALL (generate then analyse), GENERATE (resumable),
-ANALYSE (existing run). Quick read: P4A_summary.md in the run directory.
+ANALYSE (existing run), FIGURES (publication figures for an existing run,
+written to <run>/figures_publication). Quick read: P4A_summary.md in the run
+directory.
 """
 
 from __future__ import annotations
@@ -80,13 +95,13 @@ from scipy.stats import qmc
 # ============================================================================
 # VERSION (single source of truth for code, specification and tag)
 # ============================================================================
-VERSION = 12
-CODE_VERSION = f"PhDPaper4A v{VERSION} (2026-09-20)"
+VERSION = 13
+CODE_VERSION = f"PhDPaper4A v{VERSION} (2026-09-27)"
 SPEC_VERSION = "Paper 4A Specification v12: Structure (2026-09-20)"
 
 # >>> RUN_CONFIG (excluded from the analysis-code hash)
 RUN_CONFIG = dict(
-    mode="ask",                # ask | pilot | all | generate | analyse | time
+    mode="ask",                # ask | pilot | all | generate | analyse | time | figures
     out_root=r"C:\Users\Paul.Guckian\Documents\Phd\P4A",
     run_id=None,               # None = new run; set to resume or analyse
     workers=None,              # None = cpu_count - 2
@@ -2080,8 +2095,13 @@ def _h3_cell(args):
         obs += c_["obs"] * c_["trials"]; pred += c_["pred"] * c_["trials"]; ntot += c_["trials"]
     obs /= ntot; pred /= ntot
     var = pred * (1 - pred) / ntot
-    zero = var <= 1e-15                    # depths with zero predicted variance: unstandardised comparison
-    se = np.sqrt(np.where(zero, 1.0, var))
+    # Zero predicted variance means a structurally impossible depth (prediction exactly 0, the chain
+    # broken above it), compared unstandardised. Correction of 22 Sept 2026, after the confirmatory
+    # run: the frozen v12 code flagged var <= 1e-15, which also caught predictions of order 1e-12 on
+    # long complete connection chains and then failed them against a 1e-12 tolerance. Any analysis
+    # with this rule is a post hoc re-analysis and is written to an exploratory subfolder.
+    zero = pred == 0.0
+    se = np.sqrt(np.where(zero, 1.0, np.maximum(var, 1e-300)))
     maxdev, maxstep = np.empty(n_sim), np.empty(n_sim)
     for b in range(n_sim):
         acc = np.zeros(depth)
@@ -2097,7 +2117,7 @@ def _h3_cell(args):
     crit_step = float(np.percentile(maxstep, level))
     dev_vec = np.abs(obs - pred) / se
     obs_dev = float(np.max(dev_vec))
-    inside = bool(obs_dev <= crit and np.all(np.abs(obs - pred)[zero] < 1e-12))
+    inside = bool(obs_dev <= crit and np.all(obs[zero] == 0.0))
     obs_step = float(np.max(np.diff(obs))) if depth > 1 else 0.0
     mono = bool(obs_step <= crit_step + 1e-12)
     f1_ok = bool(np.max(np.abs(obs - pred)) <= f1_tol) if f == 1.0 else True
@@ -2575,6 +2595,209 @@ def svg_lines(series: Dict[str, Tuple[np.ndarray, np.ndarray]], path: str, xlab:
         f.write("\n".join(L))
 
 
+# ---- publication figures (added in v13, 27 Sept 2026) ---------------------------------------
+# Additive packaging layer: reads a finished run and writes vector figures sized for IEEEtran
+# (column 3.5 in, page 7.16 in, 8 pt text) to <run>/figures_publication. It changes no data, no
+# estimate and no verdict, and never writes into the run's citable outputs. matplotlib is needed
+# for this layer only; generation and analysis still need numpy, pandas and scipy alone.
+# Figure files: fig1_eight_glyph_key, fig2_network_of_triangles, fig3_three_shapes,
+# H1_mesh_panels, H3_chain_panels, H5_entry_share (each as .pdf and .svg).
+
+PUB_COL_IN, PUB_TEXT_IN = 3.5, 7.16
+PUB_GREY, PUB_GREEN = "#5F5E5A", "#0F6E56"
+PUB_F_COL = {0.2: "#1D4ED8", 0.4: "#0F6E56", 0.6: "#993C1D", 0.8: "#534AB7", 1.0: "#5F5E5A"}
+PUB_PANELS = [("rep4201", "Replication 4201"), ("rep4202", "Replication 4202"), ("held4301", "Held-out 4301")]
+PUB_SHAPES = [("rep_mesh12", "Mesh, degree 12", "#534AB7", "-"), ("rep_mesh6", "Mesh, degree 6", "#1D4ED8", "-"),
+              ("rep_star", "Star", "#993C1D", "--"), ("rep_chain", "Chain", "#0F6E56", ":")]
+
+
+def _pub_plt():
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({"font.family": "sans-serif", "font.size": 8, "axes.linewidth": 0.6,
+                         "pdf.fonttype": 42, "svg.fonttype": "none"})
+    return plt
+
+
+def _pub_save(fig, out: str, name: str) -> None:
+    for ext in ("pdf", "svg"):
+        fig.savefig(os.path.join(out, f"{name}.{ext}"))
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+
+
+def _pub_schematic(svg_path: str, out: str, name: str, crop, font_pt=8.0, bold_pt=None,
+                   text_dy=None, drop_text=None, harmonise=False) -> None:
+    """Redraws a schematic SVG written by write_theory_figures at column width with legible text."""
+    import xml.etree.ElementTree as ET
+    from matplotlib.patches import Circle, Polygon, FancyBboxPatch
+    from matplotlib.lines import Line2D
+    plt = _pub_plt()
+    ns = "{http://www.w3.org/2000/svg}"
+    root = ET.parse(svg_path).getroot()
+    x0, y0, x1, y1 = crop
+    s = PUB_COL_IN / (x1 - x0)
+    fig = plt.figure(figsize=(PUB_COL_IN, (y1 - y0) * s))
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(x0, x1); ax.set_ylim(y1, y0); ax.set_aspect("equal"); ax.axis("off")
+    lw = lambda el, d=1.0: max(float(el.get("stroke-width", d)) * s * 72, 0.5)
+    dash = lambda el: (0, tuple(float(v) for v in el.get("stroke-dasharray").split())) if el.get("stroke-dasharray") else "solid"
+    for el in root:
+        tag = el.tag.replace(ns, "")
+        if tag == "rect" and el.get("x") is not None:
+            ax.add_patch(FancyBboxPatch((float(el.get("x")), float(el.get("y"))), float(el.get("width")), float(el.get("height")),
+                                        boxstyle=f"round,pad=0,rounding_size={float(el.get('rx', 0))}",
+                                        fill=False, ec=el.get("stroke"), lw=lw(el), linestyle=dash(el)))
+        elif tag == "line":
+            ax.add_line(Line2D([float(el.get("x1")), float(el.get("x2"))], [float(el.get("y1")), float(el.get("y2"))],
+                               color=el.get("stroke"), lw=lw(el), linestyle=dash(el), zorder=1))
+        elif tag == "polygon":
+            pts = [tuple(map(float, p.split(","))) for p in el.get("points").split()]
+            ax.add_patch(Polygon(pts, closed=True, fill=False, ec=el.get("stroke"), lw=lw(el), zorder=2))
+        elif tag == "circle":
+            filled = el.get("fill") not in (None, "none")
+            ec, fc = el.get("stroke"), (el.get("fill") if filled else "white")
+            if harmonise:   # one convention across figures: filled grey = native, open green = supplied
+                ec, fc = (PUB_GREY, PUB_GREY) if filled else (PUB_GREEN, "white")
+            ax.add_patch(Circle((float(el.get("cx")), float(el.get("cy"))), float(el.get("r")),
+                                fc=fc, ec=ec, lw=lw(el, 1.5), zorder=3))
+        elif tag == "text":
+            txt = el.text or ""
+            if drop_text and drop_text(txt):
+                continue
+            y = float(el.get("y")) + (text_dy(el, float(el.get("y"))) if text_dy else 0)
+            bold = el.get("font-weight") == "bold"
+            ax.text(float(el.get("x")), y, txt, va="baseline", color=el.get("fill", "black"), zorder=4,
+                    ha={"middle": "center", "end": "right"}.get(el.get("text-anchor"), "left"),
+                    fontsize=(bold_pt or font_pt) if bold else font_pt, fontweight="bold" if bold else "normal")
+    _pub_save(fig, out, name)
+
+
+def _pub_sample_seeds() -> Dict[str, int]:
+    return {"rep4201": DESIGN["seeds"]["replication"][0], "rep4202": DESIGN["seeds"]["replication"][1],
+            "held4301": DESIGN["seeds"]["heldout"]}
+
+
+def pub_h1(arch: pd.DataFrame, out: str) -> None:
+    """Mean Y by density, one curve per completion level, the same means H1 fits (exact values)."""
+    plt = _pub_plt()
+    fig, axes = plt.subplots(1, 3, figsize=(PUB_TEXT_IN, 2.15), sharey=True)
+    for ax, (label, title) in zip(axes, PUB_PANELS):
+        mesh = arch[(arch["shape"] == "mesh") & (arch["sample_seed"] == _pub_sample_seeds()[label])]
+        for f, g in sorted(mesh.groupby("f_target")):
+            m_ = g.groupby("d")["Y"].mean()
+            ax.plot(m_.index.values, m_.values, color=PUB_F_COL.get(round(float(f), 1), "black"),
+                    lw=1.1, marker="o", ms=2, label=f"$f={float(f):.1f}$")
+        n_ = int(mesh["N"].iloc[0]) if len(mesh) else 0
+        ax.set_xscale("log"); ax.set_ylim(-0.02, 1.02); ax.grid(alpha=0.25, lw=0.4)
+        ax.set_title(f"{title} ($N={n_}$)", fontsize=8); ax.set_xlabel("Connection density $d$ (log)")
+    axes[0].set_ylabel("$Y$")
+    axes[0].legend(loc="upper left", fontsize=7, frameon=False, handlelength=1.5)
+    fig.tight_layout(pad=0.3, w_pad=0.6)
+    _pub_save(fig, out, "H1_mesh_panels")
+
+
+def pub_h3(by_sample: dict, out: str, n_by_label: Optional[Dict[str, int]] = None) -> None:
+    """Observed chain depth profiles p_k from the H3 cells (the values the verdict was scored on)."""
+    from matplotlib.lines import Line2D
+    plt = _pub_plt()
+    fig, axes = plt.subplots(1, 3, figsize=(PUB_TEXT_IN, 2.3), sharey=True)
+    for ax, (label, title) in zip(axes, PUB_PANELS):
+        for key, c in by_sample[label]["H3"]["cells"].items():
+            form, f = re.match(r"chain_(chan|conn)\|f([\d.]+)", key).groups()
+            obs = np.asarray(c["observed"], float)
+            ax.plot(np.arange(1, len(obs) + 1), obs, color=PUB_F_COL.get(round(float(f), 1), "black"),
+                    lw=1.0, linestyle="-" if form == "chan" else "--")
+        n_ = (n_by_label or {}).get(label)
+        ax.set_title(f"{title} ($N={n_}$)" if n_ else title, fontsize=8)
+        ax.set_xlabel("Depth $k$"); ax.set_ylim(-0.02, 1.02); ax.set_xlim(left=1); ax.grid(alpha=0.25, lw=0.4)
+    axes[0].set_ylabel("$p_k$")
+    h = [Line2D([], [], color=c, lw=1.2, label=f"$f={f:.1f}$") for f, c in PUB_F_COL.items()]
+    h += [Line2D([], [], color="black", lw=1.0, ls="-", label="Channel chain"),
+          Line2D([], [], color="black", lw=1.0, ls="--", label="Connection chain")]
+    fig.legend(handles=h, loc="lower center", ncol=7, fontsize=7, frameon=False, handlelength=2.0,
+               columnspacing=1.2, bbox_to_anchor=(0.5, 0.0))
+    fig.tight_layout(pad=0.3, w_pad=0.6, rect=(0, 0.09, 1, 1))
+    _pub_save(fig, out, "H3_chain_panels")
+
+
+def pub_h5(by_sample: dict, out: str) -> List[str]:
+    """Representative-family entry-share curves; returns the per-step table the paper's text cites."""
+    plt = _pub_plt()
+    fig, axes = plt.subplots(1, 3, figsize=(PUB_TEXT_IN, 2.3), sharey=True)
+    lines = []
+    for ax, (label, title) in zip(axes, PUB_PANELS):
+        curve = by_sample[label]["H5"]["contrasts"]["b_entry_share_curve"]
+        lines.append(title)
+        for key, name, col, ls in PUB_SHAPES:
+            if key not in curve:
+                continue
+            pts = sorted((float(e), float(y)) for e, y in curve[key].items())
+            xs, ys = [100 * e for e, _ in pts], [y for _, y in pts]
+            ax.plot(xs, ys, color=col, ls=ls, lw=1.2, marker="o", ms=2.5, label=name)
+            steps = ", ".join(f"{xs[i]:g}->{xs[i+1]:g}%: {ys[i+1]-ys[i]:+.3f}" for i in range(len(xs) - 1))
+            lines.append(f"  {name:16s} Y = " + ", ".join(f"{y:.3f}" for y in ys) + f"   steps {steps}")
+        ax.set_title(title, fontsize=8); ax.set_xlabel("Entry share (% of nodes)")
+        ax.set_xticks([1, 5, 10, 15, 20]); ax.set_ylim(bottom=0); ax.grid(alpha=0.25, lw=0.4)
+    axes[0].set_ylabel("$Y$")
+    h, l = axes[0].get_legend_handles_labels()
+    fig.legend(h, l, loc="lower center", ncol=4, fontsize=7, frameon=False, bbox_to_anchor=(0.5, 0.0))
+    fig.tight_layout(pad=0.3, w_pad=0.6, rect=(0, 0.09, 1, 1))
+    _pub_save(fig, out, "H5_entry_share")
+    return lines
+
+
+def write_publication_figures(run_dir: str, out: Optional[str] = None, by_sample: Optional[dict] = None,
+                              arch: Optional[pd.DataFrame] = None) -> str:
+    """Writes all six publication figures. Each figure is guarded separately, so one failure
+    never stops the others; failures are printed and listed in figures_publication.txt."""
+    out = out or os.path.join(run_dir, "figures_publication")
+    os.makedirs(out, exist_ok=True)
+    status, detail = [], []
+    if by_sample is None:
+        with open(os.path.join(run_dir, "verdicts.json")) as f_:
+            by_sample = json.load(f_)["by_sample"]
+    if arch is None:
+        a_ = pd.read_csv(os.path.join(run_dir, "architectures.csv"))
+        o_ = pd.read_csv(os.path.join(run_dir, "outcomes.csv"))
+        arch = a_.merge(o_[o_["source"] == "pooled"].drop(columns=["source"]), on="arch_id")
+    n_by = {}
+    for label, seed in _pub_sample_seeds().items():
+        m_ = arch[(arch["shape"] == "mesh") & (arch["sample_seed"] == seed)]
+        if len(m_):
+            n_by[label] = int(m_["N"].iloc[0])
+    src = os.path.join(out, "svg_source")
+    os.makedirs(src, exist_ok=True)
+    steps = [
+        ("theory SVGs", lambda: write_theory_figures(run_dir, src)),
+        ("fig1_eight_glyph_key", lambda: _pub_schematic(
+            os.path.join(src, "fig1_eight_glyph_key.svg"), out, "fig1_eight_glyph_key", (22, 16, 568, 198),
+            drop_text=lambda t: t.startswith("Filled corner"), text_dy=lambda el, y: 8, harmonise=True)),
+        ("fig2_network_of_triangles", lambda: _pub_schematic(
+            os.path.join(src, "fig2_network_of_triangles.svg"), out, "fig2_network_of_triangles", (14, 14, 668, 426),
+            font_pt=6.5, text_dy=lambda el, y: 6 if el.get("text-anchor") == "middle" else 0)),
+        ("fig3_three_shapes", lambda: _pub_schematic(
+            os.path.join(src, "fig3_three_shapes.svg"), out, "fig3_three_shapes", (30, 22, 610, 222),
+            font_pt=7, bold_pt=8, text_dy=lambda el, y: 4 if y > 190 else 0)),
+        ("H1_mesh_panels", lambda: pub_h1(arch, out)),
+        ("H3_chain_panels", lambda: pub_h3(by_sample, out, n_by)),
+        ("H5_entry_share", lambda: detail.extend(["", "H5 entry-share curve (mean Y by shape)"] + pub_h5(by_sample, out))),
+    ]
+    for name, fn in steps:
+        try:
+            fn()
+            status.append(f"ok     {name}")
+        except Exception as e:
+            status.append(f"FAILED {name}: {e}")
+    log = [f"{CODE_VERSION}: publication figures for {run_dir}", ""] + status + detail
+    with open(os.path.join(out, "figures_publication.txt"), "w", encoding="utf-8") as f_:
+        f_.write("\n".join(log) + "\n")
+    print("\n".join(log))
+    print(f"  publication figures -> {out}")
+    return out
+
+
 # ---- summary --------------------------------------------------------------------------------
 
 def _fmt_ci(c):
@@ -2590,7 +2813,8 @@ def write_summary(run_dir: str, final: dict, by_sample: dict, ic: dict, fz: dict
          f"- Seeds in this run: {seeds}" if seeds else "",
          f"- Architectures: " + ", ".join(f"{k} {v}" for k, v in n.items()),
          "- Intervals: 95% percentile bootstrap over architectures (cells, bases, blocks or whole architectures with all sources and nodes); never over runs or node rows",
-         "- Scope: control planes are fixed-membership directing planes; administrative reconfiguration is excluded (Adaptation, 4C). The reconfiguration bound below is static.", "",
+         "- Scope: control planes are fixed-membership directing planes; administrative reconfiguration is excluded (Adaptation, 4C). The reconfiguration bound below is static.",
+         "- H3 zero-variance rule: structural zeros only (prediction exactly 0); corrected 22 Sept 2026 after the confirmatory run (see code comment in _h3_cell)", "",
          ("## Sample results (pilot seeds; verdicts require 4201, 4202 and 4301, which are untouched)" if pilot else
           "## Verdicts (pass required on 4201, 4202 and 4301 separately)"), ""]
     cols = list(by_sample)
@@ -2757,6 +2981,10 @@ def analyse(run_dir: str, design: dict, fz: dict, rec_ok: bool, rec_diffs: List[
             svg_lines(ser, os.path.join(figs, f"H3_chain_{label}.svg"), "depth k", "p_k")
     except Exception as e:
         print(f"  figure generation failed softly: {e}")
+    try:
+        write_publication_figures(run_dir, os.path.join(out_dir, "figures_publication"), by_sample=by_sample, arch=arch)
+    except Exception as e:
+        print(f"  publication figures failed softly: {e}")
     with open(os.path.join(out_dir, "verdicts.json"), "w") as f:
         json.dump(dict(code_version=CODE_VERSION, spec_version=SPEC_VERSION, code_sha256=code_hash(), pilot=pilot,
                        citable=bool(fz["verified"] and rec_ok and not pilot and not failed), final=final,
@@ -2787,7 +3015,8 @@ MODES = [("PILOT", "pilot", "pilot seeds, reduced budget, broad screen, no verdi
          ("TIME", "time", "time 50 architectures at full runs; writes the budget estimate"),
          ("ALL", "all", "full confirmatory run: generate every sample, then analyse"),
          ("GENERATE", "generate", "generate or resume the confirmatory samples only"),
-         ("ANALYSE", "analyse", "analyse an existing run directory")]
+         ("ANALYSE", "analyse", "analyse an existing run directory"),
+         ("FIGURES", "figures", "publication figures (PDF, SVG) for an existing run; reads only")]
 
 
 def choose_mode() -> str:
@@ -2826,6 +3055,7 @@ def main(argv=None):
     ap.add_argument("--out-root")
     ap.add_argument("--workers", type=int)
     ap.add_argument("--exploratory", action="store_true")
+    ap.add_argument("--figures-out", help="FIGURES mode: folder for the figures (default <run>/figures_publication)")
     a = ap.parse_args(argv)
     cfg = dict(RUN_CONFIG)
     for k in ("mode", "run_id", "out_root", "workers"):
@@ -2849,6 +3079,13 @@ def main(argv=None):
         os.makedirs(cfg["out_root"], exist_ok=True)
         with open(os.path.join(cfg["out_root"], f"time_estimate_v{VERSION}.json"), "w") as f:
             json.dump(est, f, indent=2)
+        return
+    if mode == "figures":
+        # reads a finished run and writes figures only: no record check, no data or verdict written
+        run_dir = os.path.join(cfg["out_root"], cfg["run_id"] or choose_run_id(cfg["out_root"]))
+        if not os.path.exists(os.path.join(run_dir, "verdicts.json")):
+            raise SystemExit(f"No verdicts.json in {run_dir}; run ANALYSE first.")
+        write_publication_figures(run_dir, a.figures_out)
         return
     if mode == "analyse" and not cfg["run_id"]:
         cfg["run_id"] = choose_run_id(cfg["out_root"])
