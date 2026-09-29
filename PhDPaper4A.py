@@ -15,6 +15,9 @@ by v12; its run_record.json holds the v12 code hash):
         exploratory_analysis subfolder (see _h3_cell).
     (2) FIGURES mode and the publication-figure layer: vector PDF and SVG
         figures sized for IEEEtran, read from a finished run. Reads only.
+    (3) 29 Sept 2026: a re-analysis with changed code no longer updates
+        "finished" in the run's own run_record.json (v12 and the first v13
+        did, overwriting the confirmatory run's finish time).
 
 Implements "Paper 4A Specification v12: Structure" (20 September 2026).
 
@@ -3117,11 +3120,12 @@ def main(argv=None):
     if mode in ("pilot", "all", "analyse"):
         analyse(run_dir, dict(DESIGN, n_boot=DESIGN["pilot_n_boot"]) if pilot else DESIGN, fz, rec_ok, diffs, workers, pilot,
                 out_dir=out_dir)
-        with open(rec_path) as f:
-            rec = json.load(f)
-        rec["finished"] = _dt.datetime.now().isoformat(timespec="seconds")
-        with open(rec_path, "w") as f:
-            json.dump(rec, f, indent=2)
+        if rec_ok:   # a re-analysis with changed code never writes to the run's own record (fix, 29 Sept 2026)
+            with open(rec_path) as f:
+                rec = json.load(f)
+            rec["finished"] = _dt.datetime.now().isoformat(timespec="seconds")
+            with open(rec_path, "w") as f:
+                json.dump(rec, f, indent=2)
 
 
 if __name__ == "__main__":
