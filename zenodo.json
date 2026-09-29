@@ -1,0 +1,9 @@
+{
+  "title": "Paper 4A: Structural Defensive Levers in Systemic Cyber Risk. Analysis program, specification and run outputs",
+  "upload_type": "software",
+  "description": "Analysis program (PhDPaper4A.py, with the frozen cemt_core v0.8 embedded and hash-checked), the pre-run specification, and the confirmatory run outputs for the Paper 4A Structure study of the Structure, Time and Adaptation programme. Tag v12 is the frozen confirmatory code; tag v13 adds the labelled post hoc H3 correction and publication figures.",
+  "creators": [{"name": "Guckian, Paul", "affiliation": "Independent Researcher, London, United Kingdom"}],
+  "license": "MIT",
+  "keywords": ["systemic cyber risk", "cyber triangle", "propagation", "percolation", "network structure", "simulation"],
+  "access_right": "open"
+}

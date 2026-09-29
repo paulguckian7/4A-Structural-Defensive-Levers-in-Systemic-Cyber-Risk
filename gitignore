@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.vs/
+# large run data goes to Zenodo, not git
+run/**/architectures.csv
+run/**/outcomes.csv
+run/**/nodes.csv.gz
+run/**/runs.csv.gz
+run/**/specs/

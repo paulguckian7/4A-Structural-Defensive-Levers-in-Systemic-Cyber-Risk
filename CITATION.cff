@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Paper 4A: Structural Defensive Levers in Systemic Cyber Risk. Analysis program, specification and run outputs"
+authors:
+  - family-names: Guckian
+    given-names: Paul
+    affiliation: "Independent Researcher, London, United Kingdom"
+version: "13"
+date-released: 2026-09-29
+license: MIT
+repository-code: "https://github.com/paulguckian7/p4a-structure"
